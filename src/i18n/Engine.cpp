@@ -676,11 +676,12 @@ I18n::CI18nEngine::CI18nEngine() {
 
     huEngine->registerEntry("id_ID", TXT_KEY_PERMISSION_REQUEST_UNKNOWN, "Aplikasi <b>{app}</b> meminta izin yang tidak dikenali.");
     huEngine->registerEntry("id_ID", TXT_KEY_PERMISSION_REQUEST_SCREENCOPY, "Aplikasi <b>{app}</b> mencoba merekam layar Anda.\n\nApakah Anda mengizinkannya?");
-    huEngine->registerEntry("id_ID", TXT_KEY_PERMISSION_REQUEST_PLUGIN, "Aplikasi <b>{app}</b> mencoba memuat <i>plugin</i>: <b>{plugin}</b>.\n\nApakah Anda mengizinkannya?");
+    huEngine->registerEntry("id_ID", TXT_KEY_PERMISSION_REQUEST_PLUGIN,
+                            "Aplikasi <b>{app}</b> mencoba memuat <i>plugin</i>: <b>{plugin}</b>.\n\nApakah Anda mengizinkannya?");
     huEngine->registerEntry("id_ID", TXT_KEY_PERMISSION_REQUEST_KEYBOARD, "Keyboard baru terdeteksi: <b>{keyboard}</b>.\n\nApakah Anda mengizinkannya beroperasi?");
     huEngine->registerEntry("id_ID", TXT_KEY_PERMISSION_UNKNOWN_NAME, "(tidak diketahui)");
     huEngine->registerEntry("id_ID", TXT_KEY_PERMISSION_TITLE, "Permintaan Izin");
-    huEngine->registerEntry("id_ID", TXT_KEY_PERMISSION_PERSISTENCE_HINT, "Petunjuk: Anda dapat mengatur <i>rule</i> ini secara permanen di <i>file</i> konfigurasi Hyprland.");
+    huEngine->registerEntry("id_ID", TXT_KEY_PERMISSION_PERSISTENCE_HINT, "Petunjuk: Anda dapat mengatur <i>rule<i> ini secara permanen di <i>file config</i> Hyprland.");
     huEngine->registerEntry("id_ID", TXT_KEY_PERMISSION_ALLOW, "Izinkan");
     huEngine->registerEntry("id_ID", TXT_KEY_PERMISSION_ALLOW_AND_REMEMBER, "Izinkan dan Ingat");
     huEngine->registerEntry("id_ID", TXT_KEY_PERMISSION_ALLOW_ONCE, "Izinkan Sekali");
@@ -690,9 +691,8 @@ I18n::CI18nEngine::CI18nEngine() {
     huEngine->registerEntry("id_ID", TXT_KEY_NOTIF_EXTERNAL_XDG_DESKTOP,
                             "Variabel <i>environment</i> XDG_CURRENT_DESKTOP Anda tampaknya dikelola secara eksternal, nilainya saat ini: {value}.\nHal ini dapat menyebabkan "
                             "masalah, kecuali jika disengaja.");
-    huEngine->registerEntry(
-        "id_ID", TXT_KEY_NOTIF_NO_GUIUTILS,
-        "hyprland-guiutils belum terpasang di Sistem Anda. Paket tersebut merupakan dependensi <i>runtime</i> untuk beberapa dialog. Mohon untuk menginstalnya.");
+    huEngine->registerEntry("id_ID", TXT_KEY_NOTIF_NO_GUIUTILS,
+                            "hyprland-guiutils belum terpasang di Sistem Anda. Paket tersebut merupakan dependensi <i>runtime</i> untuk beberapa dialog. Mohon untuk menginstalnya.");
     huEngine->registerEntry("id_ID", TXT_KEY_NOTIF_FAILED_ASSETS, [](const Hyprutils::I18n::translationVarMap& vars) {
         int assetsNo = std::stoi(vars.at("count"));
         if (assetsNo <= 1)
