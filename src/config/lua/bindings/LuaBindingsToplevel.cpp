@@ -117,10 +117,10 @@ static int hlBind(lua_State* L) {
     kb.submap.reset = mgr->m_currentSubmapReset;
 
     if (auto res = parseKeyString(kb, keys); !res)
-        return luaL_error(L, std::format("hl.bind: failed to parse key string: {}", res.error()).c_str());
+        return Internal::configError(L, std::format("hl.bind: failed to parse key string: {}", res.error()));
 
     if (!lua_isfunction(L, 2))
-        return luaL_error(L, "hl.bind: dispatcher must be a function (e.g. hl.window.close()) or a lua function");
+        return Internal::configError(L, "hl.bind: dispatcher must be a function (e.g. hl.window.close()) or a lua function");
 
     lua_pushvalue(L, 2);
     int ref       = luaL_ref(L, LUA_REGISTRYINDEX);
@@ -146,8 +146,11 @@ static int hlBind(lua_State* L) {
                 return std::nullopt;
             }
 
-            if (!lua_isstring(L, -1))
-                luaL_error(L, "hl.bind: opts.%s must be a string", field);
+            if (!lua_isstring(L, -1)) {
+                lua_pop(L, 1);
+                Internal::configError(L, "hl.bind: opts.{} must be a string", field);
+                return std::nullopt;
+            }
 
             std::string result = lua_tostring(L, -1);
             lua_pop(L, 1);
@@ -186,13 +189,13 @@ static int hlBind(lua_State* L) {
         }
 
         if (click && drag)
-            luaL_error(L, "hl.bind: click and drag are exclusive");
+            return Internal::configError(L, "hl.bind: click and drag are exclusive");
 
         if ((kb.longPress || kb.release) && kb.repeat)
-            return luaL_error(L, "hl.bind: long_press / release is incompatible with repeat");
+            return Internal::configError(L, "hl.bind: long_press / release is incompatible with repeat");
 
         if (kb.mouse && (kb.repeat || kb.release || kb.locked))
-            return luaL_error(L, "hl.bind: mouse is exclusive");
+            return Internal::configError(L, "hl.bind: mouse is exclusive");
 
         kb.click = click;
         kb.drag  = drag;
@@ -254,14 +257,14 @@ static int hlDefineSubmap(lua_State* L) {
 static int dsp_execCmd(lua_State* L) {
     auto proc = Config::Supplementary::executor()->spawn(lua_tostring(L, lua_upvalueindex(1)));
     if (!proc.has_value())
-        return luaL_error(L, "Failed to start process");
+        return Internal::configError(L, "Failed to start process");
     return 0;
 }
 
 static int dsp_execRaw(lua_State* L) {
     auto proc = Config::Supplementary::executor()->spawnRaw(lua_tostring(L, lua_upvalueindex(1)));
     if (!proc || !*proc)
-        return luaL_error(L, "Failed to start process");
+        return Internal::configError(L, "Failed to start process");
     return 0;
 }
 
@@ -278,7 +281,7 @@ static int dsp_submap(lua_State* L) {
 static int dsp_pass(lua_State* L) {
     const auto PWINDOW = g_pCompositor->getWindowByRegex(lua_tostring(L, lua_upvalueindex(1)));
     if (!PWINDOW)
-        return luaL_error(L, "hl.pass: window not found");
+        return Internal::configError(L, "hl.pass: window not found");
     Internal::checkResult(L, CA::pass(PWINDOW));
     return 0;
 }
@@ -347,7 +350,7 @@ static int hlSubmap(lua_State* L) {
 
 static int hlPass(lua_State* L) {
     if (!lua_istable(L, 1))
-        return luaL_error(L, "hl.pass: expected a table { window }");
+        return Internal::configError(L, "hl.pass: expected a table { window }");
 
     const auto w = Internal::requireTableFieldWindowSelector(L, 1, "window", "hl.pass");
     lua_pushstring(L, w.c_str());
@@ -451,13 +454,13 @@ static int dsp_sendShortcut(lua_State* L) {
 
     auto              keycodeResult = resolveKeycode(key);
     if (!keycodeResult)
-        return luaL_error(L, "hl.send_shortcut: %s", keycodeResult.error().c_str());
+        return Internal::configError(L, "hl.send_shortcut: {}", keycodeResult.error());
 
     PHLWINDOW window = nullptr;
     if (!lua_isnil(L, lua_upvalueindex(3))) {
         window = g_pCompositor->getWindowByRegex(lua_tostring(L, lua_upvalueindex(3)));
         if (!window)
-            return luaL_error(L, "hl.send_shortcut: window not found");
+            return Internal::configError(L, "hl.send_shortcut: window not found");
     }
 
     Internal::checkResult(L, CA::pass(modMask, *keycodeResult, window));
@@ -471,13 +474,13 @@ static int dsp_sendKeyState(lua_State* L) {
 
     auto              keycodeResult = resolveKeycode(key);
     if (!keycodeResult)
-        return luaL_error(L, "hl.send_key_state: %s", keycodeResult.error().c_str());
+        return Internal::configError(L, "hl.send_key_state: {}", keycodeResult.error());
 
     PHLWINDOW window = nullptr;
     if (!lua_isnil(L, lua_upvalueindex(4))) {
         window = g_pCompositor->getWindowByRegex(lua_tostring(L, lua_upvalueindex(4)));
         if (!window)
-            return luaL_error(L, "hl.send_key_state: window not found");
+            return Internal::configError(L, "hl.send_key_state: window not found");
     }
 
     Internal::checkResult(L, CA::sendKeyState(modMask, *keycodeResult, keyState, window));
@@ -486,7 +489,7 @@ static int dsp_sendKeyState(lua_State* L) {
 
 static int hlSendShortcut(lua_State* L) {
     if (!lua_istable(L, 1))
-        return luaL_error(L, "hl.send_shortcut: expected a table { mods, key, window? }");
+        return Internal::configError(L, "hl.send_shortcut: expected a table { mods, key, window? }");
 
     const auto mods = Internal::requireTableFieldStr(L, 1, "mods", "hl.send_shortcut");
     const auto key  = Internal::requireTableFieldStr(L, 1, "key", "hl.send_shortcut");
@@ -500,7 +503,7 @@ static int hlSendShortcut(lua_State* L) {
 
 static int hlSendKeyState(lua_State* L) {
     if (!lua_istable(L, 1))
-        return luaL_error(L, "hl.send_key_state: expected a table { mods, key, state, window? }");
+        return Internal::configError(L, "hl.send_key_state: expected a table { mods, key, state, window? }");
 
     const auto mods     = Internal::requireTableFieldStr(L, 1, "mods", "hl.send_key_state");
     const auto key      = Internal::requireTableFieldStr(L, 1, "key", "hl.send_key_state");
@@ -512,7 +515,7 @@ static int hlSendKeyState(lua_State* L) {
     else if (stateStr == "repeat")
         keyState = 2;
     else if (stateStr != "up")
-        return luaL_error(L, "hl.send_key_state: 'state' must be \"down\", \"up\", or \"repeat\"");
+        return Internal::configError(L, "hl.send_key_state: 'state' must be \"down\", \"up\", or \"repeat\"");
 
     lua_pushstring(L, mods.c_str());
     lua_pushstring(L, key.c_str());
@@ -524,7 +527,7 @@ static int hlSendKeyState(lua_State* L) {
 
 static int hlDispatch(lua_State* L) {
     if (!lua_isfunction(L, 1))
-        return luaL_error(L, "hl.dispatch: expected a dispatcher function (e.g. hl.window.close())");
+        return Internal::configError(L, "hl.dispatch: expected a dispatcher function (e.g. hl.window.close())");
 
     lua_pushvalue(L, 1);
     int status = LUA_OK;
@@ -536,7 +539,7 @@ static int hlDispatch(lua_State* L) {
     if (status != LUA_OK) {
         const char* err = lua_tostring(L, -1);
         lua_pop(L, 1);
-        return luaL_error(L, "hl.dispatch: %s", err);
+        return Internal::configError(L, "hl.dispatch: {}", err ? err : "unknown error");
     }
 
     return 0;
@@ -560,7 +563,7 @@ static int hlOn(lua_State* L) {
         }
         list.pop_back();
         list.pop_back();
-        return luaL_error(L, "%s", (std::string("hl.on: unknown event \"") + eventName + "\". Known events:" + list).c_str());
+        return Internal::configError(L, "hl.on: unknown event \"{}\". Known events:{}", eventName, list);
     }
 
     Objects::CLuaEventSubscription::push(L, mgr->m_eventHandler.get(), *handle);
@@ -620,16 +623,16 @@ static int hlTimer(lua_State* L) {
 
     lua_getfield(L, 2, "timeout");
     if (!lua_isnumber(L, -1))
-        return luaL_error(L, "hl.timer: opts.timeout must be a number (ms)");
+        return Internal::configError(L, "hl.timer: opts.timeout must be a number (ms)");
     int timeoutMs = (int)lua_tonumber(L, -1);
     lua_pop(L, 1);
 
     if (timeoutMs <= 0)
-        return luaL_error(L, "hl.timer: opts.timeout must be > 0");
+        return Internal::configError(L, "hl.timer: opts.timeout must be > 0");
 
     lua_getfield(L, 2, "type");
     if (!lua_isstring(L, -1))
-        return luaL_error(L, "hl.timer: opts.type must be \"repeat\" or \"oneshot\"");
+        return Internal::configError(L, "hl.timer: opts.type must be \"repeat\" or \"oneshot\"");
     std::string type = lua_tostring(L, -1);
     lua_pop(L, 1);
 
@@ -637,7 +640,7 @@ static int hlTimer(lua_State* L) {
     if (type == "repeat")
         repeat = true;
     else if (type != "oneshot")
-        return luaL_error(L, "hl.timer: opts.type must be \"repeat\" or \"oneshot\"");
+        return Internal::configError(L, "hl.timer: opts.type must be \"repeat\" or \"oneshot\"");
 
     lua_pushvalue(L, 1);
     int  ref = luaL_ref(L, LUA_REGISTRYINDEX);

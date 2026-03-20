@@ -117,6 +117,7 @@ customStdenv.mkDerivation (finalAttrs: {
             ../hyprland.pc.in
             ../hyprpm
             ../LICENSE
+            ../meta
             ../protocols
             ../src
             ../start

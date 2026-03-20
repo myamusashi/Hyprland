@@ -48,7 +48,7 @@ static int dsp_lockActiveGroup(lua_State* L) {
 
 static int hlCursorMoveToCorner(lua_State* L) {
     if (!lua_istable(L, 1))
-        return luaL_error(L, "hl.cursor.move_to_corner: expected a table { corner, window? }");
+        return Internal::configError(L, "hl.cursor.move_to_corner: expected a table { corner, window? }");
 
     lua_pushnumber(L, Internal::requireTableFieldNum(L, 1, "corner", "hl.cursor.move_to_corner"));
     Internal::pushWindowUpval(L, 1);
@@ -58,7 +58,7 @@ static int hlCursorMoveToCorner(lua_State* L) {
 
 static int hlCursorMove(lua_State* L) {
     if (!lua_istable(L, 1))
-        return luaL_error(L, "hl.cursor.move: expected a table { x, y }");
+        return Internal::configError(L, "hl.cursor.move: expected a table { x, y }");
 
     lua_pushnumber(L, Internal::requireTableFieldNum(L, 1, "x", "hl.cursor.move"));
     lua_pushnumber(L, Internal::requireTableFieldNum(L, 1, "y", "hl.cursor.move"));
@@ -100,7 +100,7 @@ static int hlGroupMoveWindow(lua_State* L) {
 
 static int hlGroupActive(lua_State* L) {
     if (!lua_istable(L, 1))
-        return luaL_error(L, "hl.group.active: expected a table { index, window? }");
+        return Internal::configError(L, "hl.group.active: expected a table { index, window? }");
 
     lua_pushnumber(L, Internal::requireTableFieldNum(L, 1, "index", "hl.group.active"));
     Internal::pushWindowUpval(L, 1);

@@ -45,7 +45,7 @@ void Internal::registerBindingsImpl(lua_State* L, CConfigManager* mgr) {
             status = lua_pcall(L, 0, 0, 0);
 
         if (status != LUA_OK) {
-            Log::logger->log(Log::ERR, "[Lua] error in keybind lambda: {}", lua_tostring(L, -1));
+            Config::Lua::mgr()->addError(std::format("error in keybind lambda: {}", lua_tostring(L, -1)));
             lua_pop(L, 1);
         }
         return {};

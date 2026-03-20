@@ -362,33 +362,33 @@ static int hlCurve(lua_State* L) {
     auto nameErr = nameParser.parse(L);
     lua_pop(L, 1);
     if (nameErr.errorCode != PARSE_ERROR_OK)
-        return luaL_error(L, "%s", std::format("hl.curve: first argument (name) must be a string: {}", nameErr.message).c_str());
+        return Internal::configError(L, std::format("hl.curve: first argument (name) must be a string: {}", nameErr.message));
 
     const auto& name = nameParser.parsed();
 
     if (!lua_istable(L, 2))
-        return luaL_error(L, "hl.curve: second argument must be a table, e.g. { type = \"bezier\", points = { {0, 0}, {1, 1} } }");
+        return Internal::configError(L, "hl.curve: second argument must be a table, e.g. { type = \"bezier\", points = { {0, 0}, {1, 1} } }");
 
     CLuaConfigString typeParser("");
     auto             typeErr = Internal::parseTableField(L, 2, "type", typeParser);
     if (typeErr.errorCode != PARSE_ERROR_OK)
-        return luaL_error(L, "%s", std::format("hl.curve(\"{}\"): {}", name, typeErr.message).c_str());
+        return Internal::configError(L, std::format("hl.curve(\"{}\"): {}", name, typeErr.message));
 
     const auto& curveType = typeParser.parsed();
 
     if (curveType != "bezier")
-        return luaL_error(L, "%s", std::format("hl.curve(\"{}\"): unknown curve type \"{}\", expected \"bezier\"", name, curveType).c_str());
+        return Internal::configError(L, std::format("hl.curve(\"{}\"): unknown curve type \"{}\", expected \"bezier\"", name, curveType));
 
     lua_getfield(L, 2, "points");
     if (!lua_istable(L, -1)) {
         lua_pop(L, 1);
-        return luaL_error(L, "%s", std::format("hl.curve(\"{}\"): missing or invalid \"points\" field, expected a table of two points", name).c_str());
+        return Internal::configError(L, std::format("hl.curve(\"{}\"): missing or invalid \"points\" field, expected a table of two points", name));
     }
     int pointsIdx = lua_gettop(L);
 
     if (luaL_len(L, pointsIdx) != 2) {
         lua_pop(L, 1);
-        return luaL_error(L, "%s", std::format("hl.curve(\"{}\"): \"points\" must contain exactly 2 points, e.g. {{ {{0, 0}}, {{1, 1}} }}", name).c_str());
+        return Internal::configError(L, std::format("hl.curve(\"{}\"): \"points\" must contain exactly 2 points, e.g. {{ {{0, 0}}, {{1, 1}} }}", name));
     }
 
     float coords[4] = {};
@@ -396,7 +396,7 @@ static int hlCurve(lua_State* L) {
         lua_rawgeti(L, pointsIdx, pt);
         if (!lua_istable(L, -1) || luaL_len(L, -1) != 2) {
             lua_pop(L, 2);
-            return luaL_error(L, "%s", std::format("hl.curve(\"{}\"): point {} must be a table of 2 numbers, e.g. {{0.25, 0.1}}", name, pt).c_str());
+            return Internal::configError(L, std::format("hl.curve(\"{}\"): point {} must be a table of 2 numbers, e.g. {{0.25, 0.1}}", name, pt));
         }
         int ptIdx = lua_gettop(L);
 
@@ -407,7 +407,7 @@ static int hlCurve(lua_State* L) {
             lua_pop(L, 1);
             if (coordErr.errorCode != PARSE_ERROR_OK) {
                 lua_pop(L, 2);
-                return luaL_error(L, "%s", std::format("hl.curve(\"{}\"): point {}[{}]: {}", name, pt, comp + 1, coordErr.message).c_str());
+                return Internal::configError(L, std::format("hl.curve(\"{}\"): point {}[{}]: {}", name, pt, comp + 1, coordErr.message));
             }
             coords[((pt - 1) * 2) + comp] = coordParser.parsed();
         }
@@ -422,22 +422,22 @@ static int hlCurve(lua_State* L) {
 
 static int hlAnimation(lua_State* L) {
     if (!lua_istable(L, 1))
-        return luaL_error(L, "hl.animation: expected a table, e.g. { leaf = \"global\", enabled = true, speed = 5, bezier = \"default\" }");
+        return Internal::configError(L, "hl.animation: expected a table, e.g. { leaf = \"global\", enabled = true, speed = 5, bezier = \"default\" }");
 
     CLuaConfigString leafParser("");
     auto             leafErr = Internal::parseTableField(L, 1, "leaf", leafParser);
     if (leafErr.errorCode != PARSE_ERROR_OK)
-        return luaL_error(L, "%s", std::format("hl.animation: {}", leafErr.message).c_str());
+        return Internal::configError(L, std::format("hl.animation: {}", leafErr.message));
 
     const auto leaf = leafParser.parsed();
 
     if (!Config::animationTree()->nodeExists(leaf))
-        return luaL_error(L, "%s", std::format("hl.animation: no such animation leaf \"{}\"", leaf).c_str());
+        return Internal::configError(L, std::format("hl.animation: no such animation leaf \"{}\"", leaf));
 
     CLuaConfigBool enabledParser(true);
     auto           enabledErr = Internal::parseTableField(L, 1, "enabled", enabledParser);
     if (enabledErr.errorCode != PARSE_ERROR_OK)
-        return luaL_error(L, "%s", std::format("hl.animation(\"{}\"): {}", leaf, enabledErr.message).c_str());
+        return Internal::configError(L, std::format("hl.animation(\"{}\"): {}", leaf, enabledErr.message));
 
     bool enabled = enabledParser.parsed();
 
@@ -449,22 +449,22 @@ static int hlAnimation(lua_State* L) {
     CLuaConfigFloat speedParser(0.F, 0.F, 100.F);
     auto            speedErr = Internal::parseTableField(L, 1, "speed", speedParser);
     if (speedErr.errorCode != PARSE_ERROR_OK)
-        return luaL_error(L, "%s", std::format("hl.animation(\"{}\"): {}", leaf, speedErr.message).c_str());
+        return Internal::configError(L, std::format("hl.animation(\"{}\"): {}", leaf, speedErr.message));
 
     float speed = speedParser.parsed();
 
     if (speed <= 0)
-        return luaL_error(L, "%s", std::format("hl.animation(\"{}\"): speed must be greater than 0", leaf).c_str());
+        return Internal::configError(L, std::format("hl.animation(\"{}\"): speed must be greater than 0", leaf));
 
     CLuaConfigString bezierParser("");
     auto             bezierErr = Internal::parseTableField(L, 1, "bezier", bezierParser);
     if (bezierErr.errorCode != PARSE_ERROR_OK)
-        return luaL_error(L, "%s", std::format("hl.animation(\"{}\"): {}", leaf, bezierErr.message).c_str());
+        return Internal::configError(L, std::format("hl.animation(\"{}\"): {}", leaf, bezierErr.message));
 
     const auto& bezierName = bezierParser.parsed();
 
     if (!g_pAnimationManager->bezierExists(bezierName))
-        return luaL_error(L, "%s", std::format("hl.animation(\"{}\"): no such bezier \"{}\"", leaf, bezierName).c_str());
+        return Internal::configError(L, std::format("hl.animation(\"{}\"): no such bezier \"{}\"", leaf, bezierName));
 
     std::string style;
     lua_getfield(L, 1, "style");
@@ -473,7 +473,7 @@ static int hlAnimation(lua_State* L) {
         auto             styleErr = styleParser.parse(L);
         if (styleErr.errorCode != PARSE_ERROR_OK) {
             lua_pop(L, 1);
-            return luaL_error(L, "%s", std::format("hl.animation(\"{}\"): field \"style\": {}", leaf, styleErr.message).c_str());
+            return Internal::configError(L, std::format("hl.animation(\"{}\"): field \"style\": {}", leaf, styleErr.message));
         }
         style = styleParser.parsed();
     }
@@ -482,7 +482,7 @@ static int hlAnimation(lua_State* L) {
     if (!style.empty()) {
         auto err = g_pAnimationManager->styleValidInConfigVar(leaf, style);
         if (!err.empty())
-            return luaL_error(L, "%s", std::format("hl.animation(\"{}\"): {}", leaf, err).c_str());
+            return Internal::configError(L, std::format("hl.animation(\"{}\"): {}", leaf, err));
     }
 
     Config::animationTree()->setConfigForNode(leaf, true, speed, bezierName, style);
@@ -497,19 +497,19 @@ static int hlEnv(lua_State* L) {
     auto nameErr = nameParser.parse(L);
     lua_pop(L, 1);
     if (nameErr.errorCode != PARSE_ERROR_OK)
-        return luaL_error(L, "%s", std::format("hl.env: first argument (name) must be a string: {}", nameErr.message).c_str());
+        return Internal::configError(L, std::format("hl.env: first argument (name) must be a string: {}", nameErr.message));
 
     const auto& name = nameParser.parsed();
 
     if (name.empty())
-        return luaL_error(L, "hl.env: name must not be empty");
+        return Internal::configError(L, "hl.env: name must not be empty");
 
     CLuaConfigString valueParser("");
     lua_pushvalue(L, 2);
     auto valueErr = valueParser.parse(L);
     lua_pop(L, 1);
     if (valueErr.errorCode != PARSE_ERROR_OK)
-        return luaL_error(L, "%s", std::format("hl.env: second argument (value) must be a string: {}", valueErr.message).c_str());
+        return Internal::configError(L, std::format("hl.env: second argument (value) must be a string: {}", valueErr.message));
 
     const auto& value = valueParser.parsed();
 
@@ -528,7 +528,7 @@ static int hlEnv(lua_State* L) {
         auto dbusErr = dbusParser.parse(L);
         lua_pop(L, 1);
         if (dbusErr.errorCode != PARSE_ERROR_OK)
-            return luaL_error(L, "%s", std::format("hl.env: third argument (dbus) must be a boolean: {}", dbusErr.message).c_str());
+            return Internal::configError(L, std::format("hl.env: third argument (dbus) must be a boolean: {}", dbusErr.message));
 
         dbus = dbusParser.parsed();
     }
@@ -556,12 +556,12 @@ static int hlPluginLoad(lua_State* L) {
     auto pathErr = pathParser.parse(L);
     lua_pop(L, 1);
     if (pathErr.errorCode != PARSE_ERROR_OK)
-        return luaL_error(L, "%s", std::format("hl.plugin.load: first argument (path) must be a string: {}", pathErr.message).c_str());
+        return Internal::configError(L, std::format("hl.plugin.load: first argument (path) must be a string: {}", pathErr.message));
 
     const auto& path = pathParser.parsed();
 
     if (path.empty())
-        return luaL_error(L, "hl.plugin.load: path must not be empty");
+        return Internal::configError(L, "hl.plugin.load: path must not be empty");
 
     mgr->m_registeredPlugins.emplace_back(path);
     return 0;
@@ -582,7 +582,7 @@ static int hlPermission(lua_State* L) {
         auto m = Internal::tableOptStr(L, 1, "mode");
 
         if (!b || !t || !m)
-            return luaL_error(L, "hl.permission: expected { binary, type, mode }");
+            return Internal::configError(L, "hl.permission: expected { binary, type, mode }");
 
         binary  = *b;
         typeStr = *t;
@@ -594,7 +594,7 @@ static int hlPermission(lua_State* L) {
     }
 
     if (binary.empty())
-        return luaL_error(L, "hl.permission: binary must not be empty");
+        return Internal::configError(L, "hl.permission: binary must not be empty");
 
     eDynamicPermissionType      type = PERMISSION_TYPE_UNKNOWN;
     eDynamicPermissionAllowMode mode = PERMISSION_RULE_ALLOW_MODE_UNKNOWN;
@@ -616,9 +616,9 @@ static int hlPermission(lua_State* L) {
         mode = PERMISSION_RULE_ALLOW_MODE_DENY;
 
     if (type == PERMISSION_TYPE_UNKNOWN)
-        return luaL_error(L, "hl.permission: unknown permission type");
+        return Internal::configError(L, "hl.permission: unknown permission type");
     if (mode == PERMISSION_RULE_ALLOW_MODE_UNKNOWN)
-        return luaL_error(L, "hl.permission: unknown permission allow mode");
+        return Internal::configError(L, "hl.permission: unknown permission allow mode");
 
     if (mgr->isFirstLaunch() && g_pDynamicPermissionManager)
         g_pDynamicPermissionManager->addConfigPermissionRule(binary, type, mode);
@@ -753,28 +753,28 @@ static int hlWorkspaceRule(lua_State* L) {
 
 static int hlGesture(lua_State* L) {
     if (!lua_istable(L, 1))
-        return luaL_error(L, "hl.gesture: expected a table, e.g. { fingers = 3, direction = \"horizontal\", action = \"workspace\" }");
+        return Internal::configError(L, "hl.gesture: expected a table, e.g. { fingers = 3, direction = \"horizontal\", action = \"workspace\" }");
 
     CLuaConfigInt fingersParser(0, 2, 9);
     auto          fingersErr = Internal::parseTableField(L, 1, "fingers", fingersParser);
     if (fingersErr.errorCode != PARSE_ERROR_OK)
-        return luaL_error(L, "%s", std::format("hl.gesture: {}", fingersErr.message).c_str());
+        return Internal::configError(L, std::format("hl.gesture: {}", fingersErr.message));
 
     size_t           fingerCount = fingersParser.parsed();
 
     CLuaConfigString dirParser("");
     auto             dirErr = Internal::parseTableField(L, 1, "direction", dirParser);
     if (dirErr.errorCode != PARSE_ERROR_OK)
-        return luaL_error(L, "%s", std::format("hl.gesture: {}", dirErr.message).c_str());
+        return Internal::configError(L, std::format("hl.gesture: {}", dirErr.message));
 
     const auto direction = g_pTrackpadGestures->dirForString(dirParser.parsed());
     if (direction == TRACKPAD_GESTURE_DIR_NONE)
-        return luaL_error(L, "%s", std::format("hl.gesture: invalid direction \"{}\"", dirParser.parsed()).c_str());
+        return Internal::configError(L, std::format("hl.gesture: invalid direction \"{}\"", dirParser.parsed()));
 
     CLuaConfigString actionParser("");
     auto             actionErr = Internal::parseTableField(L, 1, "action", actionParser);
     if (actionErr.errorCode != PARSE_ERROR_OK)
-        return luaL_error(L, "%s", std::format("hl.gesture: {}", actionErr.message).c_str());
+        return Internal::configError(L, std::format("hl.gesture: {}", actionErr.message));
 
     const auto& action = actionParser.parsed();
 
@@ -785,7 +785,7 @@ static int hlGesture(lua_State* L) {
         auto             modsErr = modsParser.parse(L);
         if (modsErr.errorCode != PARSE_ERROR_OK) {
             lua_pop(L, 1);
-            return luaL_error(L, "%s", std::format("hl.gesture: field \"mods\": {}", modsErr.message).c_str());
+            return Internal::configError(L, std::format("hl.gesture: field \"mods\": {}", modsErr.message));
         }
         modMask = g_pKeybindManager->stringToModMask(modsParser.parsed());
     }
@@ -798,7 +798,7 @@ static int hlGesture(lua_State* L) {
         auto            scaleErr = scaleParser.parse(L);
         if (scaleErr.errorCode != PARSE_ERROR_OK) {
             lua_pop(L, 1);
-            return luaL_error(L, "%s", std::format("hl.gesture: field \"scale\": {}", scaleErr.message).c_str());
+            return Internal::configError(L, std::format("hl.gesture: field \"scale\": {}", scaleErr.message));
         }
         deltaScale = scaleParser.parsed();
     }
@@ -811,7 +811,7 @@ static int hlGesture(lua_State* L) {
         auto             argErr = argParser.parse(L);
         if (argErr.errorCode != PARSE_ERROR_OK) {
             lua_pop(L, 1);
-            return luaL_error(L, "%s", std::format("hl.gesture: field \"arg\": {}", argErr.message).c_str());
+            return Internal::configError(L, std::format("hl.gesture: field \"arg\": {}", argErr.message));
         }
         actionArg = argParser.parsed();
     }
@@ -824,7 +824,7 @@ static int hlGesture(lua_State* L) {
         auto             arg2Err = arg2Parser.parse(L);
         if (arg2Err.errorCode != PARSE_ERROR_OK) {
             lua_pop(L, 1);
-            return luaL_error(L, "%s", std::format("hl.gesture: field \"arg2\": {}", arg2Err.message).c_str());
+            return Internal::configError(L, std::format("hl.gesture: field \"arg2\": {}", arg2Err.message));
         }
         actionArg2 = arg2Parser.parsed();
     }
@@ -837,7 +837,7 @@ static int hlGesture(lua_State* L) {
         auto           disableInhibitErr = disableInhibitParser.parse(L);
         if (disableInhibitErr.errorCode != PARSE_ERROR_OK) {
             lua_pop(L, 1);
-            return luaL_error(L, "%s", std::format("hl.gesture: field \"disable_inhibit\": {}", disableInhibitErr.message).c_str());
+            return Internal::configError(L, std::format("hl.gesture: field \"disable_inhibit\": {}", disableInhibitErr.message));
         }
         disableInhibit = disableInhibitParser.parsed();
     }
@@ -866,10 +866,10 @@ static int hlGesture(lua_State* L) {
     else if (action == "unset")
         result = g_pTrackpadGestures->removeGesture(fingerCount, direction, modMask, deltaScale, disableInhibit);
     else
-        return luaL_error(L, "%s", std::format("hl.gesture: unknown action \"{}\"", action).c_str());
+        return Internal::configError(L, std::format("hl.gesture: unknown action \"{}\"", action));
 
     if (!result)
-        return luaL_error(L, "%s", std::format("hl.gesture: {}", result.error()).c_str());
+        return Internal::configError(L, std::format("hl.gesture: {}", result.error()));
 
     return 0;
 }

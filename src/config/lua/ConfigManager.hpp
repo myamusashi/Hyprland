@@ -141,6 +141,7 @@ namespace Config::Lua {
         bool                                  m_isFirstLaunch                       = true;
         bool                                  m_manualCrashInitiated                = false;
         bool                                  m_watchdogActive                      = false;
+        bool                                  m_isParsingConfig                     = false;
 
         std::chrono::steady_clock::time_point m_watchdogDeadline;
         std::string                           m_watchdogContext;

@@ -109,7 +109,7 @@ static int hlGetWindows(lua_State* L) {
 
     if (lua_gettop(L) >= 1 && !lua_isnil(L, 1)) {
         if (!lua_istable(L, 1))
-            return luaL_error(L, "hl.get_windows: expected no args or a table of filters");
+            return Internal::configError(L, "hl.get_windows: expected no args or a table of filters");
 
         parseWindowQueryFromTable(L, 1, "hl.get_windows", query);
     }
@@ -237,7 +237,7 @@ static int hlGetMonitorAt(lua_State* L) {
         const auto tx = Internal::tableOptNum(L, 1, "x");
         const auto ty = Internal::tableOptNum(L, 1, "y");
         if (!tx || !ty)
-            return luaL_error(L, "hl.get_monitor_at: expected a table { x, y }");
+            return Internal::configError(L, "hl.get_monitor_at: expected a table { x, y }");
 
         x = *tx;
         y = *ty;
@@ -333,7 +333,7 @@ static int hlGetLayers(lua_State* L) {
 
     if (lua_gettop(L) >= 1 && !lua_isnil(L, 1)) {
         if (!lua_istable(L, 1))
-            return luaL_error(L, "hl.get_layers: expected no args or a table of filters");
+            return Internal::configError(L, "hl.get_layers: expected no args or a table of filters");
 
         parseLayerQueryFromTable(L, 1, "hl.get_layers", query);
     }

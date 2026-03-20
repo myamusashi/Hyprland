@@ -29,6 +29,8 @@ namespace Config {
         CONFIG_LUA
     };
 
+    const char* typeToString(eConfigManagerType t);
+
     class IConfigManager {
       protected:
         IConfigManager() = default;

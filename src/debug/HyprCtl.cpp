@@ -2089,6 +2089,43 @@ static std::string submapRequest(eHyprCtlOutputFormat format, std::string reques
     return format == FORMAT_JSON ? std::format("\"{}\"\n", escapeJSONStrings(submap)) : (submap + "\n");
 }
 
+static std::string statusRequest(eHyprCtlOutputFormat format, std::string request) {
+    Aquamarine::eBackendType backendType = Aquamarine::eBackendType::AQ_BACKEND_NULL;
+
+    for (const auto& i : g_pCompositor->m_aqBackend->getImplementations()) {
+        if (i->type() == Aquamarine::eBackendType::AQ_BACKEND_NULL || i->type() == Aquamarine::eBackendType::AQ_BACKEND_HEADLESS)
+            continue;
+
+        backendType = i->type();
+        break;
+    }
+
+    std::string backendStr;
+
+    switch (backendType) {
+        case Aquamarine::AQ_BACKEND_DRM: backendStr = "drm"; break;
+        case Aquamarine::AQ_BACKEND_WAYLAND: backendStr = "wayland"; break;
+        default: backendStr = "error"; break;
+    }
+
+    if (format == eHyprCtlOutputFormat::FORMAT_JSON) {
+
+        return std::format(R"#(
+{{
+    "configProvider": "{}",
+    "backend": "{}"
+}}
+)#",
+                           Config::typeToString(Config::mgr()->type()), backendStr);
+    }
+
+    return std::format(R"#(
+configProvider: {}
+backend: {}
+)#",
+                       Config::typeToString(Config::mgr()->type()), backendStr);
+}
+
 static std::string reloadShaders(eHyprCtlOutputFormat format, std::string request) {
     CVarList vars(request, 0, ' ');
 
@@ -2122,6 +2159,7 @@ CHyprCtl::CHyprCtl() {
     registerCommand(SHyprCtlCommand{"locked", true, getIsLocked});
     registerCommand(SHyprCtlCommand{"descriptions", true, getDescriptions});
     registerCommand(SHyprCtlCommand{"submap", true, submapRequest});
+    registerCommand(SHyprCtlCommand{"status", true, statusRequest});
 
     registerCommand(SHyprCtlCommand{.name = "reloadshaders", .exact = false, .fn = reloadShaders});
     registerCommand(SHyprCtlCommand{"monitors", false, monitorsRequest});

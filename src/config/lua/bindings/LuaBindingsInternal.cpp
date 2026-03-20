@@ -69,7 +69,7 @@ PHLMONITOR Internal::monitorFromLuaSelectorOrObject(lua_State* L, int idx, const
     if (lua_isstring(L, idx) || lua_isnumber(L, idx))
         return g_pCompositor->getMonitorFromString(argStr(L, idx));
 
-    luaL_error(L, "%s: expected a monitor object or selector", fnName);
+    Internal::configError(L, "{}: expected a monitor object or selector", fnName);
     return nullptr;
 }
 
@@ -90,7 +90,7 @@ PHLWORKSPACE Internal::workspaceFromLuaSelectorOrObject(lua_State* L, int idx, c
     if (lua_isstring(L, idx) || lua_isnumber(L, idx))
         return g_pCompositor->getWorkspaceByString(argStr(L, idx));
 
-    luaL_error(L, "%s: expected a workspace object or selector", fnName);
+    Internal::configError(L, "{}: expected a workspace object or selector", fnName);
     return nullptr;
 }
 
@@ -106,7 +106,7 @@ PHLWINDOW Internal::windowFromLuaSelectorOrObject(lua_State* L, int idx, const c
     if (lua_isstring(L, idx) || lua_isnumber(L, idx))
         return g_pCompositor->getWindowByRegex(argStr(L, idx));
 
-    luaL_error(L, "%s: expected a window object or selector", fnName);
+    Internal::configError(L, "{}: expected a window object or selector", fnName);
     return nullptr;
 }
 
@@ -157,8 +157,10 @@ std::optional<std::string> Internal::monitorSelectorFromLuaSelectorOrObject(lua_
 
     if (auto* ref = sc<PHLMONITORREF*>(luaL_testudata(L, idx, LUA_MONITOR_MT)); ref) {
         const auto mon = ref->lock();
-        if (!mon)
-            luaL_error(L, "%s: monitor object is expired", fnName);
+        if (!mon) {
+            Internal::configError(L, "{}: monitor object is expired", fnName);
+            return std::nullopt;
+        }
 
         return mon->m_name;
     }
@@ -166,7 +168,7 @@ std::optional<std::string> Internal::monitorSelectorFromLuaSelectorOrObject(lua_
     if (lua_isstring(L, idx) || lua_isnumber(L, idx))
         return argStr(L, idx);
 
-    luaL_error(L, "%s: expected a monitor object or selector", fnName);
+    Internal::configError(L, "{}: expected a monitor object or selector", fnName);
     return std::nullopt;
 }
 
@@ -178,8 +180,10 @@ std::optional<std::string> Internal::workspaceSelectorFromLuaSelectorOrObject(lu
 
     if (auto* ref = sc<PHLWORKSPACEREF*>(luaL_testudata(L, idx, LUA_WORKSPACE_MT)); ref) {
         const auto ws = ref->lock();
-        if (!ws || ws->inert())
-            luaL_error(L, "%s: workspace object is expired", fnName);
+        if (!ws || ws->inert()) {
+            Internal::configError(L, "{}: workspace object is expired", fnName);
+            return std::nullopt;
+        }
 
         return std::to_string(ws->m_id);
     }
@@ -187,7 +191,7 @@ std::optional<std::string> Internal::workspaceSelectorFromLuaSelectorOrObject(lu
     if (lua_isstring(L, idx) || lua_isnumber(L, idx))
         return argStr(L, idx);
 
-    luaL_error(L, "%s: expected a workspace object or selector", fnName);
+    Internal::configError(L, "{}: expected a workspace object or selector", fnName);
     return std::nullopt;
 }
 
@@ -199,8 +203,10 @@ std::optional<std::string> Internal::windowSelectorFromLuaSelectorOrObject(lua_S
 
     if (auto* ref = sc<PHLWINDOWREF*>(luaL_testudata(L, idx, LUA_WINDOW_MT)); ref) {
         const auto w = ref->lock();
-        if (!w)
-            luaL_error(L, "%s: window object is expired", fnName);
+        if (!w) {
+            Internal::configError(L, "{}: window object is expired", fnName);
+            return std::nullopt;
+        }
 
         return std::format("0x{:x}", reinterpret_cast<uintptr_t>(w.get()));
     }
@@ -208,7 +214,7 @@ std::optional<std::string> Internal::windowSelectorFromLuaSelectorOrObject(lua_S
     if (lua_isstring(L, idx) || lua_isnumber(L, idx))
         return argStr(L, idx);
 
-    luaL_error(L, "%s: expected a window object or selector", fnName);
+    Internal::configError(L, "{}: expected a window object or selector", fnName);
     return std::nullopt;
 }
 
@@ -253,24 +259,30 @@ std::optional<std::string> Internal::tableOptWindowSelector(lua_State* L, int id
 
 std::string Internal::requireTableFieldMonitorSelector(lua_State* L, int idx, const char* field, const char* fnName) {
     auto selector = tableOptMonitorSelector(L, idx, field, fnName);
-    if (!selector)
-        luaL_error(L, "%s: '%s' is required", fnName, field);
+    if (!selector) {
+        Internal::configError(L, "{}: '{}' is required", fnName, field);
+        return "";
+    }
 
     return *selector;
 }
 
 std::string Internal::requireTableFieldWorkspaceSelector(lua_State* L, int idx, const char* field, const char* fnName) {
     auto selector = tableOptWorkspaceSelector(L, idx, field, fnName);
-    if (!selector)
-        luaL_error(L, "%s: '%s' is required", fnName, field);
+    if (!selector) {
+        Internal::configError(L, "{}: '{}' is required", fnName, field);
+        return "";
+    }
 
     return *selector;
 }
 
 std::string Internal::requireTableFieldWindowSelector(lua_State* L, int idx, const char* field, const char* fnName) {
     auto selector = tableOptWindowSelector(L, idx, field, fnName);
-    if (!selector)
-        luaL_error(L, "%s: '%s' is required", fnName, field);
+    if (!selector) {
+        Internal::configError(L, "{}: '{}' is required", fnName, field);
+        return "";
+    }
 
     return *selector;
 }
@@ -317,7 +329,7 @@ void Internal::pushWindowUpval(lua_State* L, int tableIdx) {
 
 void Internal::checkResult(lua_State* L, const CA::ActionResult& r) {
     if (!r)
-        luaL_error(L, "%s", r.error().c_str());
+        Internal::configError(L, "{}", r.error());
 }
 
 PHLWORKSPACE Internal::resolveWorkspaceStr(const std::string& args) {
@@ -352,16 +364,20 @@ std::string Internal::getSourceInfo(lua_State* L, int stackLevel) {
 
 std::string Internal::requireTableFieldStr(lua_State* L, int idx, const char* field, const char* fnName) {
     auto value = tableOptStr(L, idx, field);
-    if (!value)
-        luaL_error(L, "%s: '%s' is required", fnName, field);
+    if (!value) {
+        Internal::configError(L, "{}: '{}' is required", fnName, field);
+        return "";
+    }
 
     return *value;
 }
 
 double Internal::requireTableFieldNum(lua_State* L, int idx, const char* field, const char* fnName) {
     auto value = tableOptNum(L, idx, field);
-    if (!value)
-        luaL_error(L, "%s: '%s' is required", fnName, field);
+    if (!value) {
+        Internal::configError(L, "{}: '{}' is required", fnName, field);
+        return 0;
+    }
 
     return *value;
 }
@@ -385,4 +401,12 @@ void Internal::setMgrFn(lua_State* L, CConfigManager* mgr, const char* name, lua
     lua_pushlightuserdata(L, mgr);
     lua_pushcclosure(L, fn, 1);
     lua_setfield(L, -2, name);
+}
+
+int Internal::configError(lua_State* L, std::string s, int stackLevel) {
+    s = std::format("{}: {}", getSourceInfo(L, stackLevel), std::move(s));
+
+    Log::logger->log(Log::ERR, "Error in lua: {}", std::string_view{s});
+    Config::Lua::mgr()->addError(std::move(s));
+    return 0;
 }

@@ -64,7 +64,7 @@ static std::optional<CHyprColor> parseColorArg(lua_State* L, int idx) {
 
 static int hlNotificationCreate(lua_State* L) {
     if (!lua_istable(L, 1))
-        return luaL_error(L, "hl.notification.create: expected a table { text, duration, icon?, color?, font_size? }");
+        return Internal::configError(L, "hl.notification.create: expected a table { text, duration, icon?, color?, font_size? }");
 
     const auto            text = Internal::requireTableFieldStr(L, 1, "text", "hl.notification.create");
 
@@ -75,16 +75,16 @@ static int hlNotificationCreate(lua_State* L) {
         duration = Internal::tableOptNum(L, 1, "time");
 
     if (!duration)
-        return luaL_error(L, "hl.notification.create: 'duration' (or 'timeout' / 'time') is required");
+        return Internal::configError(L, "hl.notification.create: 'duration' (or 'timeout' / 'time') is required");
     if (*duration < 0)
-        return luaL_error(L, "hl.notification.create: duration must be >= 0");
+        return Internal::configError(L, "hl.notification.create: duration must be >= 0");
 
     eIcons icon = ICON_NONE;
     lua_getfield(L, 1, "icon");
     if (!lua_isnil(L, -1)) {
         const auto parsedIcon = parseIconArg(L, -1);
         if (!parsedIcon)
-            return luaL_error(L, "hl.notification.create: invalid 'icon' (expected icon name or number)");
+            return Internal::configError(L, "hl.notification.create: invalid 'icon' (expected icon name or number)");
 
         icon = *parsedIcon;
     }
@@ -95,7 +95,7 @@ static int hlNotificationCreate(lua_State* L) {
     if (!lua_isnil(L, -1)) {
         const auto parsedColor = parseColorArg(L, -1);
         if (!parsedColor)
-            return luaL_error(L, "hl.notification.create: invalid 'color' (expected color string or number)");
+            return Internal::configError(L, "hl.notification.create: invalid 'color' (expected color string or number)");
 
         color = *parsedColor;
     }
@@ -104,7 +104,7 @@ static int hlNotificationCreate(lua_State* L) {
     float fontSize = 13.F;
     if (const auto parsedFontSize = Internal::tableOptNum(L, 1, "font_size"); parsedFontSize.has_value()) {
         if (*parsedFontSize <= 0)
-            return luaL_error(L, "hl.notification.create: 'font_size' must be > 0");
+            return Internal::configError(L, "hl.notification.create: 'font_size' must be > 0");
 
         fontSize = sc<float>(*parsedFontSize);
     }

@@ -106,10 +106,10 @@ static bool test() {
         return false;
     }
 
-    OK(getFromSocket("/dispatch focuswindow class:kittyB"));
-    OK(getFromSocket("/dispatch togglegroup"));
-    OK(getFromSocket("/dispatch focuswindow class:kittyA"));
-    OK(getFromSocket("/dispatch togglegroup"));
+    OK(Tests::dispatchLua("hl.focus({ window = \"class:kittyB\" })"));
+    OK(Tests::dispatchLua("hl.group.toggle()"));
+    OK(Tests::dispatchLua("hl.focus({ window = \"class:kittyA\" })"));
+    OK(Tests::dispatchLua("hl.group.toggle()"));
 
     NLog::log("{}Check kittyB dimensions", Colors::YELLOW);
     {
@@ -131,7 +131,7 @@ static bool test() {
         EXPECT_COUNT_STRING(str, "fullscreen: 0", 1);
     }
 
-    OK(getFromSocket("/dispatch movewindoworgroup r"));
+    OK(Tests::dispatchLua("hl.window.move({ direction = \"r\", group_aware = true })"));
     NLog::log("{}Check that dimensions remain the same after move", Colors::YELLOW);
     {
         auto str = getFromSocket("/activewindow");

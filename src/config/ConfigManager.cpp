@@ -73,3 +73,10 @@ bool Config::initConfigManager() {
 UP<IConfigManager>& Config::mgr() {
     return g_mgr;
 }
+const char* Config::typeToString(eConfigManagerType t) {
+    switch (t) {
+        case CONFIG_LUA: return "lua";
+        case CONFIG_LEGACY: return "hyprlang";
+        default: return "error";
+    }
+}

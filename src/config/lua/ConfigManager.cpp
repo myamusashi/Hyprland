@@ -1,6 +1,7 @@
 #include "ConfigManager.hpp"
 #include "LuaBindings.hpp"
 #include "DefaultConfig.hpp"
+#include "Emergency.hpp"
 
 #include <climits>
 #include <algorithm>
@@ -63,6 +64,66 @@ static int pluginLuaFunctionDispatcher(lua_State* L) {
 
     const auto id = sc<uint64_t>(lua_tointeger(L, lua_upvalueindex(1)));
     return mgr->invokePluginLuaFunctionByID(id, L);
+}
+
+static int safeLuaRequire(lua_State* L) {
+    const int   nargs = lua_gettop(L);
+
+    std::string moduleName;
+    if (lua_isstring(L, 1))
+        moduleName = lua_tostring(L, 1);
+
+    lua_pushvalue(L, lua_upvalueindex(1));
+    lua_insert(L, 1);
+
+    const int status = lua_pcall(L, nargs, LUA_MULTRET, 0);
+    if (status == LUA_OK)
+        return lua_gettop(L);
+
+    std::string err;
+    {
+        size_t      len = 0;
+        const char* str = luaL_tolstring(L, -1, &len);
+        if (str)
+            err.assign(str, len);
+        lua_pop(L, 1);
+    }
+
+    if (auto* mgr = CConfigManager::fromLuaState(L); mgr) {
+        if (!moduleName.empty())
+            mgr->addError(std::format("require(\"{}\"): {}", moduleName, err));
+        else
+            mgr->addError(std::format("require: {}", err));
+    }
+
+    lua_pop(L, 1); // error object
+
+    lua_newtable(L); // fallback module
+    const int fallbackIdx = lua_gettop(L);
+
+    if (!moduleName.empty()) {
+        lua_getglobal(L, "package");
+        if (lua_istable(L, -1)) {
+            lua_getfield(L, -1, "loaded");
+            if (lua_istable(L, -1)) {
+                lua_pushstring(L, moduleName.c_str());
+                lua_pushvalue(L, fallbackIdx);
+                lua_settable(L, -3);
+            }
+            lua_pop(L, 1); // loaded
+        }
+        lua_pop(L, 1); // package
+    }
+
+    return 1;
+}
+
+WP<CConfigManager> Lua::mgr() {
+    auto& mgr = Config::mgr();
+    if (mgr->type() != CONFIG_LUA)
+        return nullptr;
+
+    return dynamicPointerCast<Lua::CConfigManager>(WP<IConfigManager>(mgr));
 }
 
 CConfigManager::CConfigManager() : m_mainConfigPath(Supplementary::Jeremy::getMainConfigPath()->path) {
@@ -175,6 +236,13 @@ void CConfigManager::reinitLuaState() {
     lua_setfield(m_lua, -2, "path");
     lua_pop(m_lua, 1);
 
+    lua_getglobal(m_lua, "require");
+    if (lua_isfunction(m_lua, -1)) {
+        lua_pushcclosure(m_lua, safeLuaRequire, 1);
+        lua_setglobal(m_lua, "require");
+    } else
+        lua_pop(m_lua, 1);
+
     Bindings::registerBindings(m_lua, this);
 
     m_eventHandler = makeUnique<CLuaEventHandler>(m_lua);
@@ -259,7 +327,7 @@ void CConfigManager::reload() {
     // with no binds.
     //
     // this won't help if they are launching hyprland,
-    // which is a FIXME: add some recovery binds...
+    // which will be handled with emergency pcall
     if (luaL_loadfile(m_lua, m_mainConfigPath.c_str()) != LUA_OK) {
         m_errors.clear();
         addError(lua_tostring(m_lua, -1));
@@ -282,6 +350,8 @@ void CConfigManager::reload() {
     m_deviceConfigs.clear();
     m_registeredPlugins.clear();
     m_eventHandler->clearEvents();
+
+    m_isParsingConfig = true;
 
     if (g_pKeybindManager) {
         for (const auto& kb : g_pKeybindManager->m_keybinds) {
@@ -316,7 +386,8 @@ void CConfigManager::reload() {
 
     postConfigReload();
 
-    m_isFirstLaunch = false;
+    m_isParsingConfig = false;
+    m_isFirstLaunch   = false;
 }
 
 void CConfigManager::postConfigReload() {
@@ -350,14 +421,27 @@ void CConfigManager::postConfigReload() {
         g_pHyprRenderer->m_reloadScreenShader = true;
     }
 
+    const bool emergencyModeTripped = !m_errors.empty() && g_pKeybindManager->m_keybinds.empty();
+
+    if (emergencyModeTripped)
+        luaL_dostring(m_lua, EMERGENCY_PCALL);
+
     // parseError will be displayed next frame
     if (g_pHyprError) {
         if (!m_errors.empty() && !*PSUPPRESSERRORS) {
-            std::string errorStr = "Your config has errors:\n";
+            std::string errorStr;
+
+            if (emergencyModeTripped) {
+                errorStr = "⚠ Emergency mode tripped: A lua config error resulted in no binds being registered. Emergency binds active: SUPER + Q → any known terminal, SUPER + R "
+                           "→ hyprland-run, SUPER + M → Exit\n";
+            }
+
+            errorStr += "Your config has errors:\n";
+
             for (const auto& e : m_errors) {
                 errorStr += e + "\n";
 
-                if (std::ranges::count(errorStr, '\n') > 10) {
+                if (std::ranges::count(errorStr, '\n') > 15) {
                     errorStr += "... more";
                     break;
                 }
@@ -450,7 +534,13 @@ void CConfigManager::postConfigReload() {
 }
 
 void CConfigManager::addError(std::string&& str) {
-    m_errors.emplace_back(std::move(str));
+    if (m_isParsingConfig) {
+        m_errors.emplace_back(std::move(str));
+        return;
+    }
+
+    // pop a notification
+    Notification::overlay()->addNotification(std::format("Runtime error in lua:\n{}", std::move(str)), 0, 5000, ICON_WARNING);
 }
 
 std::optional<std::string> CConfigManager::eval(const std::string& code) {

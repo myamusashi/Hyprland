@@ -61,7 +61,7 @@ static int timerSetTimeout(lua_State* L) {
     uint64_t x = lua_tointeger(L, 2);
 
     if (x < 1)
-        return luaL_error(L, "hl.timer:set_timeout: timeout must be greater or equal to 1ms");
+        return Config::Lua::Bindings::Internal::configError(L, "hl.timer:set_timeout: timeout must be greater or equal to 1ms");
 
     timer->updateTimeout(std::chrono::milliseconds(x));
     ref->timeoutMs = x;

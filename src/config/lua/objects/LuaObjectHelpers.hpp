@@ -1,5 +1,7 @@
 #pragma once
 
+#include "../bindings/LuaBindingsInternal.hpp"
+
 #include "../../../helpers/memory/Memory.hpp"
 
 extern "C" {
@@ -15,7 +17,7 @@ namespace Config::Lua::Objects {
     }
 
     inline int readOnlyNewIndex(lua_State* L) {
-        return luaL_error(L, "attempt to modify read-only hl object");
+        return Config::Lua::Bindings::Internal::configError(L, "attempt to modify read-only hl object");
     }
 
     inline void registerMetatable(lua_State* L, const char* name, lua_CFunction indexFn, lua_CFunction gcFn, lua_CFunction eqFn = nullptr, lua_CFunction toStringFn = nullptr) {

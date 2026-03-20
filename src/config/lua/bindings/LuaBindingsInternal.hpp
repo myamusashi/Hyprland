@@ -16,6 +16,7 @@
 #include <format>
 #include <string>
 #include <string_view>
+#include <utility>
 
 extern "C" {
 #include <lua.h>
@@ -60,6 +61,18 @@ namespace Config::Lua::Bindings::Internal {
     std::string                       requireTableFieldStr(lua_State* L, int idx, const char* field, const char* fnName);
     double                            requireTableFieldNum(lua_State* L, int idx, const char* field, const char* fnName);
     Config::Actions::eTogglableAction tableToggleAction(lua_State* L, int idx, const char* field = "action");
+
+    int                               configError(lua_State* L, std::string s, int stackLevel = 1);
+
+    template <typename... Args>
+    int configError(lua_State* L, std::format_string<Args...> fmt, Args&&... args) {
+        return configError(L, std::format(fmt, std::forward<Args>(args)...));
+    }
+
+    template <typename... Args>
+    int configError(lua_State* L, int stackLevel, std::format_string<Args...> fmt, Args&&... args) {
+        return configError(L, std::format(fmt, std::forward<Args>(args)...), stackLevel);
+    }
 
     template <typename T, size_t N>
     const T* findDescByName(const T (&descs)[N], std::string_view key) {

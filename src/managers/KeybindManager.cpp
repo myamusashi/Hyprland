@@ -6,21 +6,13 @@
 #include "../managers/SeatManager.hpp"
 #include "../protocols/ShortcutsInhibit.hpp"
 #include "../protocols/core/DataDevice.hpp"
-#include "../hyprerror/HyprError.hpp"
+#include "../errorOverlay/Overlay.hpp"
 #include "KeybindManager.hpp"
 #include "PointerManager.hpp"
 #include "Compositor.hpp"
 #include "eventLoop/EventLoopManager.hpp"
 #include "debug/log/Logger.hpp"
 #include "../managers/input/InputManager.hpp"
-#include "../managers/animation/DesktopAnimationManager.hpp"
-#include "../managers/EventManager.hpp"
-#include "../render/Renderer.hpp"
-#include "../errorOverlay/Overlay.hpp"
-#include "../config/ConfigManager.hpp"
-#include "../desktop/rule/windowRule/WindowRule.hpp"
-#include "../desktop/rule/Engine.hpp"
-#include "../desktop/view/Group.hpp"
 #include "../layout/LayoutManager.hpp"
 #include "../event/EventBus.hpp"
 
@@ -823,6 +815,7 @@ void CKeybindManager::clearKeybinds() {
     m_keybinds.clear();
 }
 
+<<<<<<< HEAD
 static SDispatchResult toggleActiveFloatingCore(std::string args, std::optional<bool> floatState) {
     PHLWINDOW PWINDOW = nullptr;
 
@@ -2325,6 +2318,8 @@ SDispatchResult CKeybindManager::mouse(std::string args) {
     }
 }
 
+=======
+>>>>>>> c55e2893 (config/lua: init lua config manager, use lua if available)
 SDispatchResult CKeybindManager::changeMouseBindMode(const eMouseBindMode MODE) {
     if (MODE != MBIND_INVALID) {
         if (g_layoutManager->dragController()->target())
@@ -2351,6 +2346,7 @@ SDispatchResult CKeybindManager::changeMouseBindMode(const eMouseBindMode MODE) 
 
     return {};
 }
+<<<<<<< HEAD
 SDispatchResult CKeybindManager::bringActiveToTop(std::string args) {
     if (Desktop::focusState()->window() && Desktop::focusState()->window()->m_isFloating)
         g_pCompositor->changeWindowZOrder(Desktop::focusState()->window(), true);
@@ -2948,3 +2944,5 @@ SDispatchResult CKeybindManager::sendkeystate(std::string args) {
 
     return result;
 }
+=======
+>>>>>>> c55e2893 (config/lua: init lua config manager, use lua if available)

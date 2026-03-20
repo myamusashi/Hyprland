@@ -70,7 +70,7 @@ void CLuaEventHandler::dispatch(const std::string& name, int nargs, const std::f
 
         if (status != LUA_OK) {
             const char* err = lua_tostring(m_lua, -1);
-            Log::logger->log(Log::WARN, std::format("[LuaEvents] error in hl.on(\"{}\") callback: {}", name, err ? err : "(unknown)"));
+            Config::Lua::mgr()->addError(std::format("hl.on(\"{}\") callback: {}", name, err ? err : "(unknown)"));
             lua_pop(m_lua, 1);
         }
     }

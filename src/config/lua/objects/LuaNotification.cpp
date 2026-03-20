@@ -166,7 +166,7 @@ static int notificationSetTimeout(lua_State* L) {
 
     const auto timeoutMs = sc<float>(luaL_checknumber(L, 2));
     if (timeoutMs < 0.F)
-        return luaL_error(L, "HL.Notification:set_timeout: timeout must be >= 0");
+        return Config::Lua::Bindings::Internal::configError(L, "HL.Notification:set_timeout: timeout must be >= 0");
 
     if (const auto notification = ref->notification.lock(); notification)
         notification->resetTimeout(timeoutMs);
@@ -179,7 +179,7 @@ static int notificationSetColor(lua_State* L) {
 
     const auto color = parseColor(L, 2);
     if (!color)
-        return luaL_error(L, "HL.Notification:set_color: expected a color string or number");
+        return Config::Lua::Bindings::Internal::configError(L, "HL.Notification:set_color: expected a color string or number");
 
     if (const auto notification = ref->notification.lock(); notification)
         notification->setColor(*color);
@@ -192,7 +192,7 @@ static int notificationSetIcon(lua_State* L) {
 
     const auto icon = parseIcon(L, 2);
     if (!icon)
-        return luaL_error(L, "HL.Notification:set_icon: expected an icon name or number");
+        return Config::Lua::Bindings::Internal::configError(L, "HL.Notification:set_icon: expected an icon name or number");
 
     if (const auto notification = ref->notification.lock(); notification)
         notification->setIcon(*icon);
@@ -205,7 +205,7 @@ static int notificationSetFontSize(lua_State* L) {
 
     const auto fontSize = sc<float>(luaL_checknumber(L, 2));
     if (fontSize <= 0.F)
-        return luaL_error(L, "HL.Notification:set_font_size: font size must be > 0");
+        return Config::Lua::Bindings::Internal::configError(L, "HL.Notification:set_font_size: font size must be > 0");
 
     if (const auto notification = ref->notification.lock(); notification)
         notification->setFontSize(fontSize);

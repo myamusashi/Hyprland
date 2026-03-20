@@ -14,7 +14,7 @@ static int dsp_moveFocus(lua_State* L) {
 static int dsp_focusMonitor(lua_State* L) {
     const auto PMONITOR = g_pCompositor->getMonitorFromString(lua_tostring(L, lua_upvalueindex(1)));
     if (!PMONITOR)
-        return luaL_error(L, "hl.focus.monitor: monitor not found");
+        return Internal::configError(L, "hl.focus.monitor: monitor not found");
     Internal::checkResult(L, CA::focusMonitor(PMONITOR));
     return 0;
 }
@@ -22,7 +22,7 @@ static int dsp_focusMonitor(lua_State* L) {
 static int dsp_focusWindowBySelector(lua_State* L) {
     const auto PWINDOW = g_pCompositor->getWindowByRegex(lua_tostring(L, lua_upvalueindex(1)));
     if (!PWINDOW)
-        return luaL_error(L, "hl.focus: window not found");
+        return Internal::configError(L, "hl.focus: window not found");
     Internal::checkResult(L, CA::focus(PWINDOW));
     return 0;
 }
@@ -39,13 +39,13 @@ static int dsp_focusCurrentOrLast(lua_State* L) {
 
 static int hlFocus(lua_State* L) {
     if (!lua_istable(L, 1))
-        return luaL_error(L, "hl.focus: expected a table, e.g. { direction = \"left\" }");
+        return Internal::configError(L, "hl.focus: expected a table, e.g. { direction = \"left\" }");
 
     auto dirStr = Internal::tableOptStr(L, 1, "direction");
     if (dirStr) {
         auto dir = Internal::parseDirectionStr(*dirStr);
         if (dir == Math::DIRECTION_DEFAULT)
-            return luaL_error(L, "hl.focus: invalid direction \"%s\" (expected left/right/up/down)", dirStr->c_str());
+            return Internal::configError(L, "hl.focus: invalid direction \"{}\" (expected left/right/up/down)", *dirStr);
         lua_pushnumber(L, (int)dir);
         lua_pushcclosure(L, dsp_moveFocus, 1);
         return 1;
@@ -77,7 +77,7 @@ static int hlFocus(lua_State* L) {
         return 1;
     }
 
-    return luaL_error(L, "hl.focus: unrecognized arguments. Expected one of: direction, monitor, window, urgent_or_last, last");
+    return Internal::configError(L, "hl.focus: unrecognized arguments. Expected one of: direction, monitor, window, urgent_or_last, last");
 }
 
 static int dsp_changeWorkspace(lua_State* L) {
@@ -89,7 +89,7 @@ static int dsp_toggleSpecial(lua_State* L) {
     std::string name                                   = lua_isnil(L, lua_upvalueindex(1)) ? "" : lua_tostring(L, lua_upvalueindex(1));
     const auto& [workspaceID, workspaceName, isAutoID] = getWorkspaceIDNameFromString("special:" + name);
     if (workspaceID == WORKSPACE_INVALID || !g_pCompositor->isWorkspaceSpecial(workspaceID))
-        return luaL_error(L, "Invalid special workspace");
+        return Internal::configError(L, "Invalid special workspace");
 
     auto ws = g_pCompositor->getWorkspaceByID(workspaceID);
     if (!ws) {
@@ -98,7 +98,7 @@ static int dsp_toggleSpecial(lua_State* L) {
             ws = g_pCompositor->createNewWorkspace(workspaceID, PMONITOR->m_id, workspaceName);
     }
     if (!ws)
-        return luaL_error(L, "Could not resolve special workspace");
+        return Internal::configError(L, "Could not resolve special workspace");
 
     Internal::checkResult(L, CA::toggleSpecial(ws));
     return 0;
@@ -107,7 +107,7 @@ static int dsp_toggleSpecial(lua_State* L) {
 static int dsp_renameWorkspace(lua_State* L) {
     const auto PWS = g_pCompositor->getWorkspaceByString(lua_tostring(L, lua_upvalueindex(1)));
     if (!PWS)
-        return luaL_error(L, "hl.workspace.rename: no such workspace");
+        return Internal::configError(L, "hl.workspace.rename: no such workspace");
     std::string name = lua_isnil(L, lua_upvalueindex(2)) ? "" : lua_tostring(L, lua_upvalueindex(2));
     Internal::checkResult(L, CA::renameWorkspace(PWS, name));
     return 0;
@@ -116,13 +116,13 @@ static int dsp_renameWorkspace(lua_State* L) {
 static int dsp_moveWorkspaceToMonitor(lua_State* L) {
     const auto WORKSPACEID = getWorkspaceIDNameFromString(lua_tostring(L, lua_upvalueindex(1))).id;
     if (WORKSPACEID == WORKSPACE_INVALID)
-        return luaL_error(L, "Invalid workspace");
+        return Internal::configError(L, "Invalid workspace");
     const auto PWORKSPACE = g_pCompositor->getWorkspaceByID(WORKSPACEID);
     if (!PWORKSPACE)
-        return luaL_error(L, "Workspace not found");
+        return Internal::configError(L, "Workspace not found");
     const auto PMONITOR = g_pCompositor->getMonitorFromString(lua_tostring(L, lua_upvalueindex(2)));
     if (!PMONITOR)
-        return luaL_error(L, "Monitor not found");
+        return Internal::configError(L, "Monitor not found");
     Internal::checkResult(L, CA::moveToMonitor(PWORKSPACE, PMONITOR));
     return 0;
 }
@@ -130,10 +130,10 @@ static int dsp_moveWorkspaceToMonitor(lua_State* L) {
 static int dsp_moveCurrentWorkspaceToMonitor(lua_State* L) {
     const auto PMONITOR = g_pCompositor->getMonitorFromString(lua_tostring(L, lua_upvalueindex(1)));
     if (!PMONITOR)
-        return luaL_error(L, "Monitor not found");
+        return Internal::configError(L, "Monitor not found");
     const auto PCURRENTWORKSPACE = Desktop::focusState()->monitor()->m_activeWorkspace;
     if (!PCURRENTWORKSPACE)
-        return luaL_error(L, "Invalid workspace");
+        return Internal::configError(L, "Invalid workspace");
     Internal::checkResult(L, CA::moveToMonitor(PCURRENTWORKSPACE, PMONITOR));
     return 0;
 }
@@ -141,7 +141,7 @@ static int dsp_moveCurrentWorkspaceToMonitor(lua_State* L) {
 static int dsp_focusWorkspaceOnCurrentMonitor(lua_State* L) {
     auto ws = Internal::resolveWorkspaceStr(lua_tostring(L, lua_upvalueindex(1)));
     if (!ws)
-        return luaL_error(L, "Invalid workspace");
+        return Internal::configError(L, "Invalid workspace");
     Internal::checkResult(L, CA::changeWorkspaceOnCurrentMonitor(ws));
     return 0;
 }
@@ -150,7 +150,7 @@ static int dsp_swapActiveWorkspaces(lua_State* L) {
     const auto PMON1 = g_pCompositor->getMonitorFromString(lua_tostring(L, lua_upvalueindex(1)));
     const auto PMON2 = g_pCompositor->getMonitorFromString(lua_tostring(L, lua_upvalueindex(2)));
     if (!PMON1 || !PMON2)
-        return luaL_error(L, "Monitor not found");
+        return Internal::configError(L, "Monitor not found");
     Internal::checkResult(L, CA::swapActiveWorkspaces(PMON1, PMON2));
     return 0;
 }
@@ -159,7 +159,7 @@ static int hlWorkspace(lua_State* L) {
     if (!lua_istable(L, 1)) {
         auto ws = Internal::workspaceSelectorFromLuaSelectorOrObject(L, 1, "hl.workspace");
         if (!ws)
-            return luaL_error(L, "hl.workspace: expected a workspace selector/object or table");
+            return Internal::configError(L, "hl.workspace: expected a workspace selector/object or table");
 
         lua_pushstring(L, ws->c_str());
         lua_pushcclosure(L, dsp_changeWorkspace, 1);
@@ -186,12 +186,12 @@ static int hlWorkspace(lua_State* L) {
         return 1;
     }
 
-    return luaL_error(L, "hl.workspace: unrecognized arguments. Expected one of: number/string shorthand, { special }, { id }");
+    return Internal::configError(L, "hl.workspace: unrecognized arguments. Expected one of: number/string shorthand, { special }, { id }");
 }
 
 static int hlWorkspaceRename(lua_State* L) {
     if (!lua_istable(L, 1))
-        return luaL_error(L, "hl.workspace.rename: expected a table { id, name? }");
+        return Internal::configError(L, "hl.workspace.rename: expected a table { id, name? }");
 
     const auto id   = Internal::requireTableFieldWorkspaceSelector(L, 1, "id", "hl.workspace.rename");
     auto       name = Internal::tableOptStr(L, 1, "name");
@@ -207,7 +207,7 @@ static int hlWorkspaceRename(lua_State* L) {
 
 static int hlWorkspaceMove(lua_State* L) {
     if (!lua_istable(L, 1))
-        return luaL_error(L, "hl.workspace.move: expected a table, e.g. { monitor = \"DP-1\" }");
+        return Internal::configError(L, "hl.workspace.move: expected a table, e.g. { monitor = \"DP-1\" }");
 
     const auto mon = Internal::requireTableFieldMonitorSelector(L, 1, "monitor", "hl.workspace.move");
 
@@ -226,7 +226,7 @@ static int hlWorkspaceMove(lua_State* L) {
 
 static int hlWorkspaceSwapMonitors(lua_State* L) {
     if (!lua_istable(L, 1))
-        return luaL_error(L, "hl.workspace.swap_monitors: expected a table { monitor1, monitor2 }");
+        return Internal::configError(L, "hl.workspace.swap_monitors: expected a table { monitor1, monitor2 }");
 
     const auto m1 = Internal::requireTableFieldMonitorSelector(L, 1, "monitor1", "hl.workspace.swap_monitors");
     const auto m2 = Internal::requireTableFieldMonitorSelector(L, 1, "monitor2", "hl.workspace.swap_monitors");

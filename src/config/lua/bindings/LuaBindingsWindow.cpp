@@ -9,7 +9,7 @@ namespace CA = Config::Actions;
 static int dsp_moveToWorkspace(lua_State* L) {
     auto ws = Internal::resolveWorkspaceStr(lua_tostring(L, lua_upvalueindex(1)));
     if (!ws)
-        return luaL_error(L, "Invalid workspace");
+        return Internal::configError(L, "Invalid workspace");
 
     bool silent = lua_toboolean(L, lua_upvalueindex(2));
     Internal::checkResult(L, CA::moveToWorkspace(ws, silent, Internal::windowFromUpval(L, 3)));
@@ -53,7 +53,7 @@ static int dsp_fullscreenWindowWithAction(lua_State* L) {
 
     const auto target = maybeW.value_or(Desktop::focusState()->window());
     if (!target)
-        return luaL_error(L, "No target found.");
+        return Internal::configError(L, "No target found.");
 
     const bool currentlyMode = target->isEffectiveInternalFSMode(mode);
 
@@ -69,7 +69,7 @@ static int dsp_fullscreenWindowWithAction(lua_State* L) {
         return 0;
     }
 
-    return luaL_error(L, "hl.window.fullscreen: invalid action");
+    return Internal::configError(L, "hl.window.fullscreen: invalid action");
 }
 
 static int dsp_fullscreenState(lua_State* L) {
@@ -80,7 +80,7 @@ static int dsp_fullscreenState(lua_State* L) {
 
     const auto target = maybeW.value_or(Desktop::focusState()->window());
     if (!target)
-        return luaL_error(L, "No target found.");
+        return Internal::configError(L, "No target found.");
 
     const auto CURRENT        = target->m_fullscreenState;
     const bool atDesiredState = CURRENT.internal == desiredInternal && CURRENT.client == desiredClient;
@@ -102,7 +102,7 @@ static int dsp_fullscreenState(lua_State* L) {
         return 0;
     }
 
-    return luaL_error(L, "hl.window.fullscreen_state: invalid action");
+    return Internal::configError(L, "hl.window.fullscreen_state: invalid action");
 }
 
 static int dsp_pseudoWindow(lua_State* L) {
@@ -146,7 +146,7 @@ static int dsp_swapWithWindow(lua_State* L) {
     const auto targetSelector = lua_tostring(L, lua_upvalueindex(2));
     const auto target         = g_pCompositor->getWindowByRegex(targetSelector);
     if (!target)
-        return luaL_error(L, "hl.window.swap: target window not found");
+        return Internal::configError(L, "hl.window.swap: target window not found");
 
     Internal::checkResult(L, CA::swapWith(target, source));
     return 0;
@@ -243,7 +243,7 @@ static int hlWindowKill(lua_State* L) {
 
 static int hlWindowSignal(lua_State* L) {
     if (!lua_istable(L, 1))
-        return luaL_error(L, "hl.window.signal: expected a table { signal, window? }");
+        return Internal::configError(L, "hl.window.signal: expected a table { signal, window? }");
 
     lua_pushnumber(L, Internal::requireTableFieldNum(L, 1, "signal", "hl.window.signal"));
     Internal::pushWindowUpval(L, 1);
@@ -271,7 +271,7 @@ static int hlWindowFullscreen(lua_State* L) {
             else if (*m == "fullscreen" || *m == "0")
                 mode = FSMODE_FULLSCREEN;
             else
-                return luaL_error(L, "hl.window.fullscreen: invalid mode \"%s\" (expected fullscreen/maximized)", m->c_str());
+                return Internal::configError(L, "hl.window.fullscreen: invalid mode \"{}\" (expected fullscreen/maximized)", *m);
         }
 
         auto a = Internal::tableOptStr(L, 1, "action");
@@ -283,7 +283,7 @@ static int hlWindowFullscreen(lua_State* L) {
             else if (*a == "unset")
                 action = 2;
             else
-                return luaL_error(L, "hl.window.fullscreen: invalid action \"%s\" (expected toggle/set/unset)", a->c_str());
+                return Internal::configError(L, "hl.window.fullscreen: invalid action \"{}\" (expected toggle/set/unset)", *a);
         }
     }
     lua_pushnumber(L, (int)mode);
@@ -300,7 +300,7 @@ static int hlWindowFullscreen(lua_State* L) {
 
 static int hlWindowFullscreenState(lua_State* L) {
     if (!lua_istable(L, 1))
-        return luaL_error(L, "hl.window.fullscreen_state: expected a table { internal, client, action?, window? }");
+        return Internal::configError(L, "hl.window.fullscreen_state: expected a table { internal, client, action?, window? }");
 
     int action = 1; // default to set semantics
     if (auto a = Internal::tableOptStr(L, 1, "action"); a) {
@@ -311,13 +311,13 @@ static int hlWindowFullscreenState(lua_State* L) {
         else if (*a == "unset")
             action = 2;
         else
-            return luaL_error(L, "hl.window.fullscreen_state: invalid action \"%s\" (expected toggle/set/unset)", a->c_str());
+            return Internal::configError(L, "hl.window.fullscreen_state: invalid action \"{}\" (expected toggle/set/unset)", *a);
     }
 
     auto im = Internal::tableOptNum(L, 1, "internal");
     auto cm = Internal::tableOptNum(L, 1, "client");
     if (!im || !cm)
-        return luaL_error(L, "hl.window.fullscreen_state: 'internal' and 'client' are required");
+        return Internal::configError(L, "hl.window.fullscreen_state: 'internal' and 'client' are required");
 
     lua_pushnumber(L, (int)*im);
     lua_pushnumber(L, (int)*cm);
@@ -338,13 +338,13 @@ static int hlWindowPseudo(lua_State* L) {
 
 static int hlWindowMove(lua_State* L) {
     if (!lua_istable(L, 1))
-        return luaL_error(L, "hl.window.move: expected a table, e.g. { direction = \"left\" }");
+        return Internal::configError(L, "hl.window.move: expected a table, e.g. { direction = \"left\" }");
 
     auto dirStr = Internal::tableOptStr(L, 1, "direction");
     if (dirStr) {
         auto dir = Internal::parseDirectionStr(*dirStr);
         if (dir == Math::DIRECTION_DEFAULT)
-            return luaL_error(L, "hl.window.move: invalid direction \"%s\" (expected left/right/up/down)", dirStr->c_str());
+            return Internal::configError(L, "hl.window.move: invalid direction \"{}\" (expected left/right/up/down)", *dirStr);
 
         auto groupAware = Internal::tableOptBool(L, 1, "group_aware");
         if (groupAware && *groupAware) {
@@ -387,7 +387,7 @@ static int hlWindowMove(lua_State* L) {
     if (intoGroup) {
         auto dir = Internal::parseDirectionStr(*intoGroup);
         if (dir == Math::DIRECTION_DEFAULT)
-            return luaL_error(L, "hl.window.move: invalid into_group direction \"%s\"", intoGroup->c_str());
+            return Internal::configError(L, "hl.window.move: invalid into_group direction \"{}\"", *intoGroup);
         lua_pushnumber(L, (int)dir);
         Internal::pushWindowUpval(L, 1);
         lua_pushcclosure(L, dsp_moveIntoGroup, 2);
@@ -398,7 +398,7 @@ static int hlWindowMove(lua_State* L) {
     if (intoOrCreateGroup) {
         auto dir = Internal::parseDirectionStr(*intoOrCreateGroup);
         if (dir == Math::DIRECTION_DEFAULT)
-            return luaL_error(L, "hl.window.move: invalid into_or_create_group direction \"%s\"", intoOrCreateGroup->c_str());
+            return Internal::configError(L, "hl.window.move: invalid into_or_create_group direction \"{}\"", *intoOrCreateGroup);
         lua_pushnumber(L, (int)dir);
         Internal::pushWindowUpval(L, 1);
         lua_pushcclosure(L, dsp_moveIntoOrCreateGroup, 2);
@@ -422,18 +422,18 @@ static int hlWindowMove(lua_State* L) {
         return 1;
     }
 
-    return luaL_error(L, "hl.window.move: unrecognized arguments. Expected one of: direction, x+y(+relative), workspace, into_group, out_of_group");
+    return Internal::configError(L, "hl.window.move: unrecognized arguments. Expected one of: direction, x+y(+relative), workspace, into_group, out_of_group");
 }
 
 static int hlWindowSwap(lua_State* L) {
     if (!lua_istable(L, 1))
-        return luaL_error(L, "hl.window.swap: expected a table, e.g. { direction = \"left\" }");
+        return Internal::configError(L, "hl.window.swap: expected a table, e.g. { direction = \"left\" }");
 
     auto dirStr = Internal::tableOptStr(L, 1, "direction");
     if (dirStr) {
         auto dir = Internal::parseDirectionStr(*dirStr);
         if (dir == Math::DIRECTION_DEFAULT)
-            return luaL_error(L, "hl.window.swap: invalid direction \"%s\" (expected left/right/up/down)", dirStr->c_str());
+            return Internal::configError(L, "hl.window.swap: invalid direction \"{}\" (expected left/right/up/down)", *dirStr);
         lua_pushnumber(L, (int)dir);
         Internal::pushWindowUpval(L, 1);
         lua_pushcclosure(L, dsp_swapInDirection, 2);
@@ -469,7 +469,7 @@ static int hlWindowSwap(lua_State* L) {
         return 1;
     }
 
-    return luaL_error(L, "hl.window.swap: unrecognized arguments. Expected one of: direction, target/with/other, next, prev");
+    return Internal::configError(L, "hl.window.swap: unrecognized arguments. Expected one of: direction, target/with/other, next, prev");
 }
 
 static int hlWindowCenter(lua_State* L) {
@@ -503,7 +503,7 @@ static int hlWindowCycleNext(lua_State* L) {
 
 static int hlWindowTag(lua_State* L) {
     if (!lua_istable(L, 1))
-        return luaL_error(L, "hl.window.tag: expected a table { tag, window? }");
+        return Internal::configError(L, "hl.window.tag: expected a table { tag, window? }");
 
     const auto tag = Internal::requireTableFieldStr(L, 1, "tag", "hl.window.tag");
     lua_pushstring(L, tag.c_str());
@@ -519,12 +519,12 @@ static int hlWindowToggleSwallow(lua_State* L) {
 
 static int hlWindowResizeExact(lua_State* L) {
     if (!lua_istable(L, 1))
-        return luaL_error(L, "hl.window.resize: expected a table { x, y, relative?, window? }");
+        return Internal::configError(L, "hl.window.resize: expected a table { x, y, relative?, window? }");
     auto x        = Internal::tableOptNum(L, 1, "x");
     auto y        = Internal::tableOptNum(L, 1, "y");
     bool relative = Internal::tableOptBool(L, 1, "relative").value_or(false);
     if (!x || !y)
-        return luaL_error(L, "hl.window.resize: 'x' and 'y' are required");
+        return Internal::configError(L, "hl.window.resize: 'x' and 'y' are required");
     lua_pushnumber(L, *x);
     lua_pushnumber(L, *y);
     lua_pushboolean(L, relative);
@@ -549,7 +549,7 @@ static int hlWindowBringToTop(lua_State* L) {
 
 static int hlWindowAlterZOrder(lua_State* L) {
     if (!lua_istable(L, 1))
-        return luaL_error(L, "hl.window.alter_zorder: expected a table { mode, window? }");
+        return Internal::configError(L, "hl.window.alter_zorder: expected a table { mode, window? }");
 
     const auto mode = Internal::requireTableFieldStr(L, 1, "mode", "hl.window.alter_zorder");
     lua_pushstring(L, mode.c_str());
@@ -560,7 +560,7 @@ static int hlWindowAlterZOrder(lua_State* L) {
 
 static int hlWindowSetProp(lua_State* L) {
     if (!lua_istable(L, 1))
-        return luaL_error(L, "hl.window.set_prop: expected a table { prop, value, window? }");
+        return Internal::configError(L, "hl.window.set_prop: expected a table { prop, value, window? }");
 
     const auto prop  = Internal::requireTableFieldStr(L, 1, "prop", "hl.window.set_prop");
     const auto value = Internal::requireTableFieldStr(L, 1, "value", "hl.window.set_prop");
@@ -591,7 +591,7 @@ static int hlWindowResize(lua_State* L) {
     }
 
     if (!lua_istable(L, 1))
-        return luaL_error(L, "hl.window.resize: expected no args, or a table { x, y, relative?, window? }");
+        return Internal::configError(L, "hl.window.resize: expected no args, or a table { x, y, relative?, window? }");
 
     return hlWindowResizeExact(L);
 }
