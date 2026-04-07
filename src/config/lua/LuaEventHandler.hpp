@@ -57,5 +57,4 @@ namespace Config::Lua {
 
         void                                                   dispatch(const std::string& name, int nargs, const std::function<void()>& pushArgs);
     };
-
 }

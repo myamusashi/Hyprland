@@ -5,9 +5,7 @@
 #include "../../render/Renderer.hpp"
 #include "../../render/pass/ClearPassElement.hpp"
 #include "../../render/pass/TexPassElement.hpp"
-#include <hyprgraphics/egl/Egl.hpp>
 
-using namespace Hyprgraphics::Egl;
 using namespace Screenshare;
 
 CCursorshareSession::CCursorshareSession(wl_client* client, WP<CWLPointerResource> pointer) : m_client(client), m_pointer(pointer) {
@@ -166,7 +164,7 @@ bool CCursorshareSession::copy() {
                 callback(RESULT_COPIED);
         });
     } else if (auto attrs = m_pendingFrame.buffer->shm(); attrs.success) {
-        const auto PFORMAT = getPixelFormatFromDRM(m_format);
+        const auto PFORMAT = NFormatUtils::getPixelFormatFromDRM(m_format);
 
         if (attrs.format != m_format || !PFORMAT) {
             LOGM(Log::ERR, "Can't copy: invalid format");
@@ -192,9 +190,11 @@ bool CCursorshareSession::copy() {
 
         if (glFormat != GL_BGRA_EXT && glFormat != GL_RGB) {
             if (PFORMAT->swizzle.has_value()) {
-                if (PFORMAT->swizzle == SWIZZLE_RGBA)
+                std::array<GLint, 4> RGBA = SWIZZLE_RGBA;
+                std::array<GLint, 4> BGRA = SWIZZLE_BGRA;
+                if (PFORMAT->swizzle == RGBA)
                     glFormat = GL_RGBA;
-                else if (PFORMAT->swizzle == SWIZZLE_BGRA)
+                else if (PFORMAT->swizzle == BGRA)
                     glFormat = GL_BGRA_EXT;
                 else {
                     LOGM(Log::ERR, "Copied frame via shm might be broken or color flipped");

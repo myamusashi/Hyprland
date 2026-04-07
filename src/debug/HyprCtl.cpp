@@ -1270,8 +1270,7 @@ static std::string dispatchRequest(eHyprCtlOutputFormat format, std::string in) 
     if (Config::mgr()->type() == Config::CONFIG_LUA) {
         // For lua, this is just a wrapper for `eval("hl.dispatch(in)")
         std::string evalStr = std::format("hl.dispatch({})", in);
-        auto        luaMgr  = dynamicPointerCast<Config::Lua::CConfigManager>(WP<Config::IConfigManager>(Config::mgr()));
-        auto        ret     = luaMgr->eval(evalStr).value_or("ok");
+        auto        ret     = evalRequest(format, evalStr);
 
         if (ret.starts_with("ok") || in.contains("(") /* this likely means the user is passing a valid lua dispatch string */)
             return ret;

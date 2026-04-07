@@ -2211,6 +2211,7 @@ static hdr_output_metadata       createHDRMetadata(SImageDescription settings, S
 
 void IHyprRenderer::handleFullscreenSettings(PHLMONITOR pMonitor) {
     static auto PCT        = CConfigValue<Config::INTEGER>("render:send_content_type");
+
     static auto PAUTOHDR   = CConfigValue<Config::INTEGER>("render:cm_auto_hdr");
     static auto PNONSHADER = CConfigValue<Config::INTEGER>("render:non_shader_cm");
     static auto PNSINTEROP = CConfigValue<Config::INTEGER>("render:non_shader_cm_interop");

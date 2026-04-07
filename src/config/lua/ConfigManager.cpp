@@ -125,7 +125,6 @@ WP<CConfigManager> Lua::mgr() {
 
     return dynamicPointerCast<Lua::CConfigManager>(WP<IConfigManager>(mgr));
 }
-
 CConfigManager::CConfigManager() : m_mainConfigPath(Supplementary::Jeremy::getMainConfigPath()->path) {
     ;
 }

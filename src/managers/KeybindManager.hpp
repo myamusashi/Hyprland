@@ -56,6 +56,8 @@ struct SKeybind {
 
     std::string                     displayKey = "";
 
+    std::string                     displayKey = "";
+
     // DO NOT INITIALIZE
     bool shadowed = false;
 };

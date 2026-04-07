@@ -220,7 +220,23 @@ SBoxExtents CWindow::getFullWindowExtents() const {
     maxExtents.bottomRight.y = std::max(EXTENTS.bottomRight.y, maxExtents.bottomRight.y);
 
     if (m_wlSurface->exists() && !m_isX11 && m_popupHead) {
-        const auto& surfaceExtents = m_popupHead->popupTreeExtents();
+        CBox surfaceExtents = {0, 0, 0, 0};
+        // TODO: this could be better, perhaps make a getFullWindowRegion?
+        m_popupHead->breadthfirst(
+            [](WP<Desktop::View::CPopup> popup, void* data) {
+                if (!popup->wlSurface() || !popup->wlSurface()->resource())
+                    return;
+
+                CBox* pSurfaceExtents = sc<CBox*>(data);
+                CBox  surf            = CBox{popup->coordsRelativeToParent(), popup->size()};
+                pSurfaceExtents->x    = std::min(surf.x, pSurfaceExtents->x);
+                pSurfaceExtents->y    = std::min(surf.y, pSurfaceExtents->y);
+                if (surf.x + surf.w > pSurfaceExtents->width)
+                    pSurfaceExtents->width = surf.x + surf.w - pSurfaceExtents->x;
+                if (surf.y + surf.h > pSurfaceExtents->height)
+                    pSurfaceExtents->height = surf.y + surf.h - pSurfaceExtents->y;
+            },
+            &surfaceExtents);
 
         maxExtents.topLeft.x = std::max(-surfaceExtents.x, maxExtents.topLeft.x);
 
@@ -743,10 +759,7 @@ bool CWindow::isInCurvedCorner(double x, double y) {
 
 // checks if the wayland window has a popup at pos
 bool CWindow::hasPopupAt(const Vector2D& pos) {
-    if (m_isX11 || !m_popupHead)
-        return false;
-
-    if (m_popupHead->popupTreeCount() == 0)
+    if (m_isX11)
         return false;
 
     auto popup = m_popupHead->at(pos);
@@ -937,7 +950,9 @@ int CWindow::popupsCount() {
     if (m_isX11 || !m_popupHead)
         return 0;
 
-    return m_popupHead->popupTreeCount();
+    int no = -1;
+    m_popupHead->breadthfirst([](WP<Desktop::View::CPopup> p, void* d) { *sc<int*>(d) += 1; }, &no);
+    return no;
 }
 
 int CWindow::surfacesCount() {

@@ -52,7 +52,6 @@ local menu        = "hyprlauncher"
 -- end, { timeout = 1000, type = "repeat" })
 -- demoTimer:set_enabled(false)
 
-
 -------------------------------
 ---- ENVIRONMENT VARIABLES ----
 -------------------------------
@@ -338,7 +337,6 @@ hl.window_rule({
 --     no_anim = true,
 -- })
 -- overlayLayerRule:set_enabled(false)
-
 -- Hyprland-run windowrule
 hl.window_rule({
     name  = "move-hyprland-run",

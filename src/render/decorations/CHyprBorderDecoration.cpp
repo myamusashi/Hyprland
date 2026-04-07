@@ -126,15 +126,9 @@ void CHyprBorderDecoration::damageEntire() {
     borderRegion.subtract(GLOBAL_BOX.copy().expand(-(BORDERSIZE + ROUNDING)));
     borderRegion.expand(2); // pad
 
-    const CBox borderExtents = borderRegion.getExtents();
-
     for (auto const& m : g_pCompositor->m_monitors) {
-        const CBox monitorBox = {m->m_position, m->m_size};
-        if (borderExtents.intersection(monitorBox).empty())
-            continue;
-
         if (!g_pHyprRenderer->shouldRenderWindow(m_window.lock(), m)) {
-            const CRegion monitorRegion(monitorBox);
+            const CRegion monitorRegion({m->m_position, m->m_size});
             borderRegion.subtract(monitorRegion);
         }
     }

@@ -9,8 +9,6 @@
 
 #include <hyprutils/utils/ScopeGuard.hpp>
 
-#include <ranges>
-
 using namespace Desktop;
 using namespace Desktop::History;
 

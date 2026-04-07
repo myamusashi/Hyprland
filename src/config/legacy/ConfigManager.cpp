@@ -673,9 +673,8 @@ std::optional<std::string> CConfigManager::verifyConfigExists() {
         if (const auto res = generateDefaultConfig(mainConfigPath->path, g_pCompositor->m_safeMode); !res)
             return res.error();
     }
-
-    return {};
-}
+    if (!mainConfigPath || !std::filesystem::exists(mainConfigPath->path))
+        return "broken config dir?";
 
 std::string CConfigManager::getConfigString() {
     std::string configString;
