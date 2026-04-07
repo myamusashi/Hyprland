@@ -14,9 +14,7 @@
 #include "../../render/pass/RectPassElement.hpp"
 #include "helpers/cm/ColorManagement.hpp"
 #include <hyprutils/math/Region.hpp>
-#include <hyprgraphics/egl/Egl.hpp>
 
-using namespace Hyprgraphics::Egl;
 using namespace Screenshare;
 
 CScreenshareFrame::CScreenshareFrame(WP<CScreenshareSession> session, bool overlayCursor, bool isFirst) :
@@ -397,7 +395,7 @@ bool CScreenshareFrame::copyShm() {
 
     auto       shm = m_buffer->shm();
 
-    const auto PFORMAT = getPixelFormatFromDRM(shm.format);
+    const auto PFORMAT = NFormatUtils::getPixelFormatFromDRM(shm.format);
     if (!PFORMAT) {
         LOGM(Log::ERR, "Can't copy: failed to find a pixel format");
         return false;

@@ -131,7 +131,7 @@ set(AQUAMARINE_MINIMUM_VERSION 0.9.3)
 set(HYPRLANG_MINIMUM_VERSION 0.6.7)
 set(HYPRCURSOR_MINIMUM_VERSION 0.1.7)
 set(HYPRUTILS_MINIMUM_VERSION 0.11.1)
-set(HYPRGRAPHICS_MINIMUM_VERSION 0.5.1)
+set(HYPRGRAPHICS_MINIMUM_VERSION 0.1.6)
 
 pkg_check_modules(aquamarine_dep REQUIRED IMPORTED_TARGET aquamarine>=${AQUAMARINE_MINIMUM_VERSION})
 pkg_check_modules(hyprlang_dep REQUIRED IMPORTED_TARGET hyprlang>=${HYPRLANG_MINIMUM_VERSION})
@@ -268,7 +268,8 @@ pkg_check_modules(
   gio-2.0
   re2
   muparser
-  lcms2)
+  lcms2
+  lua)
 
 find_package(hyprwayland-scanner 0.3.10 REQUIRED)
 
