@@ -46,6 +46,12 @@ local menu        = "hyprlauncher"
 -- hl.exec_once("nm-applet")
 -- hl.exec_once("waybar & hyprpaper & firefox")
 
+-- Timers now return an object handle.
+-- local demoTimer = hl.timer(function()
+--     print("hello from timer")
+-- end, { timeout = 1000, type = "repeat" })
+-- demoTimer:set_enabled(false)
+
 
 -------------------------------
 ---- ENVIRONMENT VARIABLES ----
@@ -242,7 +248,8 @@ local mainMod = "SUPER" -- Sets "Windows" key as main modifier
 
 -- Example binds, see https://wiki.hypr.land/Configuring/Binds/ for more
 hl.bind(mainMod .. " + Q", hl.exec_cmd(terminal))
-hl.bind(mainMod .. " + C", hl.window.close())
+local closeWindowBind = hl.bind(mainMod .. " + C", hl.window.close())
+-- closeWindowBind:set_enabled(false)
 hl.bind(mainMod .. " + M", hl.exec_cmd("command -v hyprshutdown >/dev/null 2>&1 && hyprshutdown || hyprctl dispatch 'hl.exit()'"))
 hl.bind(mainMod .. " + E", hl.exec_cmd(fileManager))
 hl.bind(mainMod .. " + V", hl.window.float({ action = "toggle" }))
@@ -300,13 +307,14 @@ hl.bind("XF86AudioPrev",  hl.exec_cmd("playerctl previous"),   { locked = true }
 
 -- Example window rules that are useful
 
-hl.window_rule({
+local suppressMaximizeRule = hl.window_rule({
     -- Ignore maximize requests from all apps. You'll probably like this.
     name  = "suppress-maximize-events",
     match = { class = ".*" },
 
     suppress_event = "maximize",
 })
+-- suppressMaximizeRule:set_enabled(false)
 
 hl.window_rule({
     -- Fix some dragging issues with XWayland
@@ -322,6 +330,14 @@ hl.window_rule({
 
     no_focus = true,
 })
+
+-- Layer rules also return a handle.
+-- local overlayLayerRule = hl.layer_rule({
+--     name  = "no-anim-overlay",
+--     match = { namespace = "^my-overlay$" },
+--     no_anim = true,
+-- })
+-- overlayLayerRule:set_enabled(false)
 
 -- Hyprland-run windowrule
 hl.window_rule({

@@ -34,6 +34,7 @@ namespace Config::Lua {
         virtual const std::type_info* underlying()        = 0;
         virtual void const*           data()              = 0;
         virtual std::string           toString()          = 0;
+        virtual void                  push(lua_State* s)  = 0;
 
         virtual void                  reset() = 0;
         virtual void                  resetSetByUser();

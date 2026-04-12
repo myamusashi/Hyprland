@@ -6,6 +6,8 @@
 #include <format>
 #include <string_view>
 
+using namespace Config::Lua;
+
 static constexpr const char* MT = "HL.LayerSurface";
 
 static int                   layerSurfaceIndex(lua_State* L) {
@@ -39,14 +41,12 @@ static int                   layerSurfaceIndex(lua_State* L) {
     return 1;
 }
 
-namespace Config::Lua::Objects {
-    void CLuaLayerSurface::setup(lua_State* L) {
-        registerMetatable(L, MT, layerSurfaceIndex, gcRef<PHLLSREF>);
-    }
+void Objects::CLuaLayerSurface::setup(lua_State* L) {
+    registerMetatable(L, MT, layerSurfaceIndex, gcRef<PHLLSREF>);
+}
 
-    void CLuaLayerSurface::push(lua_State* L, PHLLS ls) {
-        new (lua_newuserdata(L, sizeof(PHLLSREF))) PHLLSREF(ls ? ls->m_self : nullptr);
-        luaL_getmetatable(L, MT);
-        lua_setmetatable(L, -2);
-    }
+void Objects::CLuaLayerSurface::push(lua_State* L, PHLLS ls) {
+    new (lua_newuserdata(L, sizeof(PHLLSREF))) PHLLSREF(ls ? ls->m_self : nullptr);
+    luaL_getmetatable(L, MT);
+    lua_setmetatable(L, -2);
 }

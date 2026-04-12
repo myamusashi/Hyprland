@@ -56,6 +56,10 @@ std::string CLuaConfigFontWeight::toString() {
     return m_data.toString();
 }
 
+void CLuaConfigFontWeight::push(lua_State* s) {
+    lua_pushinteger(s, m_data.m_value);
+}
+
 const CFontWeightConfigValueData& CLuaConfigFontWeight::parsed() {
     return m_data;
 }

@@ -75,6 +75,10 @@ std::string CLuaConfigInt::toString() {
     return std::to_string(m_data);
 }
 
+void CLuaConfigInt::push(lua_State* s) {
+    lua_pushinteger(s, m_data);
+}
+
 const Config::INTEGER& CLuaConfigInt::parsed() {
     return m_data;
 }

@@ -38,8 +38,8 @@ namespace Config::Actions {
     ActionResult focusUrgentOrLast();
     ActionResult center(std::optional<PHLWINDOW> window = std::nullopt /* Active */);
     ActionResult moveCursorToCorner(int corner, std::optional<PHLWINDOW> window = std::nullopt /* Active */);
-    ActionResult resizeBy(const Vector2D& Δ, std::optional<PHLWINDOW> window = std::nullopt /* Active */);
-    ActionResult moveBy(const Vector2D& Δ, std::optional<PHLWINDOW> window = std::nullopt /* Active */);
+    ActionResult resize(const Vector2D& size, bool relative = false, std::optional<PHLWINDOW> window = std::nullopt /* Active */);
+    ActionResult move(const Vector2D& pos, bool relative = false, std::optional<PHLWINDOW> window = std::nullopt /* Active */);
     ActionResult cycleNext(const bool next, std::optional<bool> onlyTiled, std::optional<bool> onlyFloating, std::optional<PHLWINDOW> window = std::nullopt /* Active */);
     ActionResult tag(const std::string& tag, std::optional<PHLWINDOW> window = std::nullopt /* Active */);
     ActionResult pass(std::optional<PHLWINDOW> window = std::nullopt /* Active */);

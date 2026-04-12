@@ -49,6 +49,11 @@ std::string CLuaConfigColor::toString() {
     return std::format("0x{:08X}", (uint32_t)m_data);
 }
 
+void CLuaConfigColor::push(lua_State* s) {
+    const auto col = toString();
+    lua_pushstring(s, col.c_str());
+}
+
 const Config::INTEGER& CLuaConfigColor::parsed() {
     return m_data;
 }

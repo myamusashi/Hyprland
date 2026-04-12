@@ -429,7 +429,7 @@ static SDispatchResult resizeactive(const std::string& args) {
     if (SIZ.x < 1 || SIZ.y < 1)
         return {.success = false, .error = "Invalid size"};
 
-    return wrap(Actions::resizeBy(SIZ - PWINDOW->m_realSize->goal()));
+    return wrap(Actions::resize(SIZ));
 }
 
 static SDispatchResult moveactive(const std::string& args) {
@@ -438,7 +438,7 @@ static SDispatchResult moveactive(const std::string& args) {
         return {.success = false, .error = "No window found"};
 
     const auto POS = g_pCompositor->parseWindowVectorArgsRelative(args, PWINDOW->m_realPosition->goal());
-    return wrap(Actions::moveBy(POS - PWINDOW->m_realPosition->goal()));
+    return wrap(Actions::move(POS));
 }
 
 static SDispatchResult movewindowpixel(const std::string& args) {
@@ -450,7 +450,7 @@ static SDispatchResult movewindowpixel(const std::string& args) {
         return {.success = false, .error = "moveWindow: no window"};
 
     const auto POS = g_pCompositor->parseWindowVectorArgsRelative(MOVECMD, PWINDOW->m_realPosition->goal());
-    return wrap(Actions::moveBy(POS - PWINDOW->m_realPosition->goal(), PWINDOW));
+    return wrap(Actions::move(POS, false, PWINDOW));
 }
 
 static SDispatchResult resizewindowpixel(const std::string& args) {
@@ -465,7 +465,7 @@ static SDispatchResult resizewindowpixel(const std::string& args) {
     if (SIZ.x < 1 || SIZ.y < 1)
         return {.success = false, .error = "Invalid size"};
 
-    return wrap(Actions::resizeBy(SIZ - PWINDOW->m_realSize->goal(), PWINDOW));
+    return wrap(Actions::resize(SIZ, false, PWINDOW));
 }
 
 static SDispatchResult cyclenext(const std::string& arg) {

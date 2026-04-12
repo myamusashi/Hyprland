@@ -6,6 +6,8 @@
 
 #include <string_view>
 
+using namespace Config::Lua;
+
 static constexpr const char* MT = "HL.Workspace";
 
 static int                   workspaceIndex(lua_State* L) {
@@ -26,7 +28,7 @@ static int                   workspaceIndex(lua_State* L) {
     else if (key == "monitor") {
         const auto mon = ws->m_monitor.lock();
         if (mon)
-            Config::Lua::Objects::CLuaMonitor::push(L, mon);
+            Objects::CLuaMonitor::push(L, mon);
         else
             lua_pushnil(L);
     } else if (key == "windows")
@@ -41,14 +43,12 @@ static int                   workspaceIndex(lua_State* L) {
     return 1;
 }
 
-namespace Config::Lua::Objects {
-    void CLuaWorkspace::setup(lua_State* L) {
-        registerMetatable(L, MT, workspaceIndex, gcRef<PHLWORKSPACEREF>);
-    }
+void Objects::CLuaWorkspace::setup(lua_State* L) {
+    registerMetatable(L, MT, workspaceIndex, gcRef<PHLWORKSPACEREF>);
+}
 
-    void CLuaWorkspace::push(lua_State* L, PHLWORKSPACE ws) {
-        new (lua_newuserdata(L, sizeof(PHLWORKSPACEREF))) PHLWORKSPACEREF(ws ? ws->m_self : nullptr);
-        luaL_getmetatable(L, MT);
-        lua_setmetatable(L, -2);
-    }
+void Objects::CLuaWorkspace::push(lua_State* L, PHLWORKSPACE ws) {
+    new (lua_newuserdata(L, sizeof(PHLWORKSPACEREF))) PHLWORKSPACEREF(ws ? ws->m_self : nullptr);
+    luaL_getmetatable(L, MT);
+    lua_setmetatable(L, -2);
 }

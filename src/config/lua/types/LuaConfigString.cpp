@@ -1,5 +1,7 @@
 #include "LuaConfigString.hpp"
 
+#include "../../../macros.hpp"
+
 using namespace Config;
 using namespace Config::Lua;
 
@@ -36,6 +38,13 @@ void const* CLuaConfigString::data() {
 
 std::string CLuaConfigString::toString() {
     return m_data;
+}
+
+void CLuaConfigString::push(lua_State* s) {
+    if (m_data == STRVAL_EMPTY)
+        lua_pushliteral(s, "");
+    else
+        lua_pushstring(s, m_data.c_str());
 }
 
 const Config::STRING& CLuaConfigString::parsed() {

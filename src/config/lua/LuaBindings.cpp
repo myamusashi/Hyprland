@@ -6,6 +6,10 @@
 #include "objects/LuaWorkspace.hpp"
 #include "objects/LuaMonitor.hpp"
 #include "objects/LuaLayerSurface.hpp"
+#include "objects/LuaTimer.hpp"
+#include "objects/LuaWindowRule.hpp"
+#include "objects/LuaLayerRule.hpp"
+#include "objects/LuaKeybind.hpp"
 #include "types/LuaConfigBool.hpp"
 #include "types/LuaConfigCssGap.hpp"
 #include "types/LuaConfigFloat.hpp"
@@ -619,8 +623,9 @@ static int hlBind(lua_State* L) {
         lua_pop(L, 1);
     }
 
-    g_pKeybindManager->addKeybind(kb);
-    return 0;
+    const auto BIND = g_pKeybindManager->addKeybind(kb);
+    Objects::CLuaKeybind::push(L, BIND);
+    return 1;
 }
 
 static int hlDefineSubmap(lua_State* L) {
@@ -1143,16 +1148,16 @@ static int dsp_toggleSwallow(lua_State* L) {
     return 0;
 }
 
-// upval 1: x (number), upval 2: y (number), upval 3: window or nil
-static int dsp_resizeBy(lua_State* L) {
-    Vector2D delta{lua_tonumber(L, lua_upvalueindex(1)), lua_tonumber(L, lua_upvalueindex(2))};
-    checkResult(L, CA::resizeBy(delta, windowFromUpval(L, 3)));
+// upval 1: x (number), upval 2: y (number), upval 3: relative (bool), upval 4: window or nil
+static int dsp_resize(lua_State* L) {
+    Vector2D value{lua_tonumber(L, lua_upvalueindex(1)), lua_tonumber(L, lua_upvalueindex(2))};
+    checkResult(L, CA::resize(value, lua_toboolean(L, lua_upvalueindex(3)), windowFromUpval(L, 4)));
     return 0;
 }
 
-static int dsp_moveBy(lua_State* L) {
-    Vector2D delta{lua_tonumber(L, lua_upvalueindex(1)), lua_tonumber(L, lua_upvalueindex(2))};
-    checkResult(L, CA::moveBy(delta, windowFromUpval(L, 3)));
+static int dsp_move(lua_State* L) {
+    Vector2D value{lua_tonumber(L, lua_upvalueindex(1)), lua_tonumber(L, lua_upvalueindex(2))};
+    checkResult(L, CA::move(value, lua_toboolean(L, lua_upvalueindex(3)), windowFromUpval(L, 4)));
     return 0;
 }
 
@@ -1300,7 +1305,7 @@ static int hlWindowPseudo(lua_State* L) {
     return 1;
 }
 
-// -- Unified window move factory: hl.window.move({ direction | x,y | workspace | into_group | out_of_group | group_aware }) --
+// -- Unified window move factory: hl.window.move({ direction | x,y[,relative] | workspace | into_group | out_of_group | group_aware }) --
 
 static int hlWindowMove(lua_State* L) {
     if (!lua_istable(L, 1))
@@ -1328,14 +1333,16 @@ static int hlWindowMove(lua_State* L) {
         return 1;
     }
 
-    // hl.window.move({ x = 100, y = 0 })
+    // hl.window.move({ x = 100, y = 0, relative? = false })
     auto x = tableOptNum(L, 1, "x");
     auto y = tableOptNum(L, 1, "y");
     if (x && y) {
+        bool relative = tableOptBool(L, 1, "relative").value_or(false);
         lua_pushnumber(L, *x);
         lua_pushnumber(L, *y);
+        lua_pushboolean(L, relative);
         pushWindowUpval(L, 1);
-        lua_pushcclosure(L, dsp_moveBy, 3);
+        lua_pushcclosure(L, dsp_move, 4);
         return 1;
     }
 
@@ -1393,7 +1400,7 @@ static int hlWindowMove(lua_State* L) {
         return 1;
     }
 
-    return luaL_error(L, "hl.window.move: unrecognized arguments. Expected one of: direction, x+y, workspace, into_group, out_of_group");
+    return luaL_error(L, "hl.window.move: unrecognized arguments. Expected one of: direction, x+y(+relative), workspace, into_group, out_of_group");
 }
 
 // -- Unified window swap factory: hl.window.swap({ direction | next | prev }) --
@@ -1483,18 +1490,20 @@ static int hlWindowToggleSwallow(lua_State* L) {
     return 1;
 }
 
-static int hlWindowResizeBy(lua_State* L) {
-    // resize_by({ x, y, window? })
+static int hlWindowResizeExact(lua_State* L) {
+    // resize({ x, y, relative? = false, window? })
     if (!lua_istable(L, 1))
-        return luaL_error(L, "hl.window.resize_by: expected a table { x, y, window? }");
-    auto x = tableOptNum(L, 1, "x");
-    auto y = tableOptNum(L, 1, "y");
+        return luaL_error(L, "hl.window.resize: expected a table { x, y, relative?, window? }");
+    auto x        = tableOptNum(L, 1, "x");
+    auto y        = tableOptNum(L, 1, "y");
+    bool relative = tableOptBool(L, 1, "relative").value_or(false);
     if (!x || !y)
-        return luaL_error(L, "hl.window.resize_by: 'x' and 'y' are required");
+        return luaL_error(L, "hl.window.resize: 'x' and 'y' are required");
     lua_pushnumber(L, *x);
     lua_pushnumber(L, *y);
+    lua_pushboolean(L, relative);
     pushWindowUpval(L, 1);
-    lua_pushcclosure(L, dsp_resizeBy, 3);
+    lua_pushcclosure(L, dsp_resize, 4);
     return 1;
 }
 
@@ -1562,8 +1571,16 @@ static int hlWindowDrag(lua_State* L) {
 }
 
 static int hlWindowResize(lua_State* L) {
-    lua_pushcclosure(L, dsp_mouseResize, 0);
-    return 1;
+    // resize() -> mouse resize, resize({ x, y, relative?, window? }) -> geometry resize
+    if (lua_gettop(L) == 0 || lua_isnil(L, 1)) {
+        lua_pushcclosure(L, dsp_mouseResize, 0);
+        return 1;
+    }
+
+    if (!lua_istable(L, 1))
+        return luaL_error(L, "hl.window.resize: expected no args, or a table { x, y, relative?, window? }");
+
+    return hlWindowResizeExact(L);
 }
 
 // -- Focus dispatch closures ----------------------------------------------------
@@ -2225,7 +2242,8 @@ static int hlTimer(lua_State* L) {
     if (g_pEventLoopManager)
         g_pEventLoopManager->addTimer(timer);
 
-    return 0;
+    Objects::CLuaTimer::push(L, timer, timeoutMs);
+    return 1;
 }
 
 static int hlEnv(lua_State* L) {
@@ -2415,6 +2433,48 @@ static int hlWorkspaceRule(lua_State* L) {
         }
         std::string_view key = lua_tostring(L, -2);
         if (key == "workspace" || key == "enabled") {
+            lua_pop(L, 1);
+            continue;
+        }
+
+        if (key == "layout_opts") {
+            if (!lua_istable(L, -1)) {
+                self->addError(std::format("{}: hl.workspace_rule: field 'layout_opts' must be a table", sourceInfo));
+                lua_pop(L, 1);
+                continue;
+            }
+
+            const int optsIdx = lua_gettop(L);
+            lua_pushnil(L);
+            while (lua_next(L, optsIdx) != 0) {
+                if (lua_type(L, -2) != LUA_TSTRING) {
+                    self->addError(std::format("{}: hl.workspace_rule: field 'layout_opts' keys must be strings", sourceInfo));
+                    lua_pop(L, 1);
+                    continue;
+                }
+
+                std::string optKey = lua_tostring(L, -2);
+                std::string optVal;
+
+                if (lua_type(L, -1) == LUA_TBOOLEAN)
+                    optVal = lua_toboolean(L, -1) ? "true" : "false";
+                else if (lua_type(L, -1) == LUA_TNUMBER) {
+                    if (lua_isinteger(L, -1))
+                        optVal = std::to_string(lua_tointeger(L, -1));
+                    else
+                        optVal = std::to_string(lua_tonumber(L, -1));
+                } else if (lua_isstring(L, -1))
+                    optVal = lua_tostring(L, -1);
+                else {
+                    self->addError(std::format("{}: hl.workspace_rule: field 'layout_opts.{}' must be string, bool, or number", sourceInfo, optKey));
+                    lua_pop(L, 1);
+                    continue;
+                }
+
+                wsRule.m_layoutopts[std::move(optKey)] = std::move(optVal);
+                lua_pop(L, 1);
+            }
+
             lua_pop(L, 1);
             continue;
         }
@@ -2622,6 +2682,28 @@ static int hlConfig(lua_State* L) {
 
     walk("", 1);
     return 0;
+}
+
+static int hlGetConfig(lua_State* L) {
+    auto*       self = static_cast<CConfigManager*>(lua_touserdata(L, lua_upvalueindex(1)));
+
+    std::string key = luaL_checkstring(L, 1);
+
+    auto        it = self->m_configValues.find(key);
+    if (it == self->m_configValues.end()) {
+        std::ranges::replace(key, ':', '.');
+        it = self->m_configValues.find(key);
+    }
+
+    if (it == self->m_configValues.end()) {
+        lua_pushnil(L);
+        const auto msg = std::format("unknown config key '{}'", key);
+        lua_pushstring(L, msg.c_str());
+        return 2;
+    }
+
+    it->second->push(L);
+    return 1;
 }
 
 static int hlDevice(lua_State* L) {
@@ -2872,7 +2954,8 @@ static int hlWindowRule(lua_State* L) {
         lua_pop(L, 1);
     }
 
-    return 0;
+    Objects::CLuaWindowRule::push(L, rule);
+    return 1;
 }
 
 static int hlLayerRule(lua_State* L) {
@@ -2980,10 +3063,16 @@ static int hlLayerRule(lua_State* L) {
         lua_pop(L, 1);
     }
 
-    return 0;
+    Objects::CLuaLayerRule::push(L, rule);
+    return 1;
 }
 
 void Bindings::registerBindings(lua_State* L, CConfigManager* mgr) {
+    Objects::CLuaTimer{}.setup(L);
+    Objects::CLuaWindowRule{}.setup(L);
+    Objects::CLuaLayerRule{}.setup(L);
+    Objects::CLuaKeybind{}.setup(L);
+
     // register a __lua dispatcher for lua lambda keybinds
     g_pKeybindManager->m_dispatchers["__lua"] = [L](std::string arg) -> SDispatchResult {
         int ref = std::stoi(arg);
@@ -3001,6 +3090,11 @@ void Bindings::registerBindings(lua_State* L, CConfigManager* mgr) {
     lua_pushlightuserdata(L, mgr);
     lua_pushcclosure(L, hlConfig, 1);
     lua_setfield(L, -2, "config");
+
+    // hl.get_config("general.gaps_in")
+    lua_pushlightuserdata(L, mgr);
+    lua_pushcclosure(L, hlGetConfig, 1);
+    lua_setfield(L, -2, "get_config");
 
     // hl.device({name = "...", sensitivity = 0.5, ...})
     lua_pushlightuserdata(L, mgr);
@@ -3158,8 +3252,6 @@ void Bindings::registerBindings(lua_State* L, CConfigManager* mgr) {
     lua_setfield(L, -2, "tag");
     lua_pushcfunction(L, hlWindowToggleSwallow);
     lua_setfield(L, -2, "toggle_swallow");
-    lua_pushcfunction(L, hlWindowResizeBy);
-    lua_setfield(L, -2, "resize_by");
     lua_pushcfunction(L, hlWindowPin);
     lua_setfield(L, -2, "pin");
     lua_pushcfunction(L, hlWindowBringToTop);

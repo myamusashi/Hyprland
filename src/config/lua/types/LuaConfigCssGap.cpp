@@ -79,6 +79,22 @@ std::string CLuaConfigCssGap::toString() {
     return m_data.toString();
 }
 
+void CLuaConfigCssGap::push(lua_State* s) {
+    lua_createtable(s, 0, 4);
+
+    lua_pushinteger(s, m_data.m_top);
+    lua_setfield(s, -2, "top");
+
+    lua_pushinteger(s, m_data.m_right);
+    lua_setfield(s, -2, "right");
+
+    lua_pushinteger(s, m_data.m_bottom);
+    lua_setfield(s, -2, "bottom");
+
+    lua_pushinteger(s, m_data.m_left);
+    lua_setfield(s, -2, "left");
+}
+
 const CCssGapData& CLuaConfigCssGap::parsed() {
     return m_data;
 }

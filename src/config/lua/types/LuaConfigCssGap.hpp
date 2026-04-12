@@ -15,6 +15,7 @@ namespace Config::Lua {
         virtual const std::type_info* underlying();
         virtual void const*           data();
         virtual std::string           toString();
+        virtual void                  push(lua_State* s);
         virtual void                  reset();
 
         const CCssGapData&            parsed();

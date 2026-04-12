@@ -52,6 +52,7 @@ struct SKeybind {
     bool                            submapUniversal = false;
     bool                            deviceInclusive = false;
     std::unordered_set<std::string> devices         = {};
+    bool                            enabled         = true;
 
     std::string                     displayKey = "";
 
@@ -113,7 +114,7 @@ class CKeybindManager {
     void                                                                         onSwitchOnEvent(const std::string&);
     void                                                                         onSwitchOffEvent(const std::string&);
 
-    void                                                                         addKeybind(SKeybind);
+    SP<SKeybind>                                                                 addKeybind(SKeybind);
     void                                                                         removeKeybind(uint32_t, const SParsedKey&);
     uint32_t                                                                     stringToModMask(std::string);
     uint32_t                                                                     keycodeToModifier(xkb_keycode_t);

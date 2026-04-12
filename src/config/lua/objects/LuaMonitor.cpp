@@ -7,6 +7,8 @@
 
 #include <string_view>
 
+using namespace Config::Lua;
+
 static constexpr const char* MT = "HL.Monitor";
 
 static int                   monitorIndex(lua_State* L) {
@@ -38,7 +40,7 @@ static int                   monitorIndex(lua_State* L) {
         lua_pushinteger(L, static_cast<int>(mon->m_position.y));
     else if (key == "active_workspace") {
         if (mon->m_activeWorkspace)
-            Config::Lua::Objects::CLuaWorkspace::push(L, mon->m_activeWorkspace);
+            Objects::CLuaWorkspace::push(L, mon->m_activeWorkspace);
         else
             lua_pushnil(L);
     } else if (key == "scale")
@@ -55,14 +57,12 @@ static int                   monitorIndex(lua_State* L) {
     return 1;
 }
 
-namespace Config::Lua::Objects {
-    void CLuaMonitor::setup(lua_State* L) {
-        registerMetatable(L, MT, monitorIndex, gcRef<PHLMONITORREF>);
-    }
+void Objects::CLuaMonitor::setup(lua_State* L) {
+    registerMetatable(L, MT, monitorIndex, gcRef<PHLMONITORREF>);
+}
 
-    void CLuaMonitor::push(lua_State* L, PHLMONITOR mon) {
-        new (lua_newuserdata(L, sizeof(PHLMONITORREF))) PHLMONITORREF(mon ? mon->m_self : nullptr);
-        luaL_getmetatable(L, MT);
-        lua_setmetatable(L, -2);
-    }
+void Objects::CLuaMonitor::push(lua_State* L, PHLMONITOR mon) {
+    new (lua_newuserdata(L, sizeof(PHLMONITORREF))) PHLMONITORREF(mon ? mon->m_self : nullptr);
+    luaL_getmetatable(L, MT);
+    lua_setmetatable(L, -2);
 }

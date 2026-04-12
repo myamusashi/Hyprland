@@ -57,6 +57,22 @@ std::string CLuaConfigVec2::toString() {
     return std::format("{} {}", (int)m_data.x, (int)m_data.y);
 }
 
+void CLuaConfigVec2::push(lua_State* s) {
+    lua_createtable(s, 2, 2);
+
+    lua_pushnumber(s, m_data.x);
+    lua_rawseti(s, -2, 1);
+
+    lua_pushnumber(s, m_data.y);
+    lua_rawseti(s, -2, 2);
+
+    lua_pushnumber(s, m_data.x);
+    lua_setfield(s, -2, "x");
+
+    lua_pushnumber(s, m_data.y);
+    lua_setfield(s, -2, "y");
+}
+
 const Config::VEC2& CLuaConfigVec2::parsed() {
     return m_data;
 }

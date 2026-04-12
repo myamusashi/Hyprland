@@ -67,6 +67,10 @@ std::string CLuaConfigFloat::toString() {
     return std::to_string(m_data);
 }
 
+void CLuaConfigFloat::push(lua_State* s) {
+    lua_pushnumber(s, m_data);
+}
+
 const Config::FLOAT& CLuaConfigFloat::parsed() {
     return m_data;
 }

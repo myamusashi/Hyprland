@@ -114,7 +114,7 @@ CKeybindManager::CKeybindManager() {
     m_longPressTimer = makeShared<CEventLoopTimer>(
         std::nullopt,
         [this](SP<CEventLoopTimer> self, void* data) {
-            if (!m_lastLongPressKeybind || g_pSeatManager->m_keyboard.expired())
+            if (!m_lastLongPressKeybind || !m_lastLongPressKeybind->enabled || g_pSeatManager->m_keyboard.expired())
                 return;
 
             const auto PACTIVEKEEB = g_pSeatManager->m_keyboard.lock();
@@ -131,6 +131,8 @@ CKeybindManager::CKeybindManager() {
     m_repeatKeyTimer = makeShared<CEventLoopTimer>(
         std::nullopt,
         [this](SP<CEventLoopTimer> self, void* data) {
+            std::erase_if(m_activeKeybinds, [](const auto& k) { return !k || !k->enabled; });
+
             if (m_activeKeybinds.empty() || g_pSeatManager->m_keyboard.expired())
                 return;
 
@@ -139,6 +141,9 @@ CKeybindManager::CKeybindManager() {
                 return;
 
             for (const auto& k : m_activeKeybinds) {
+                if (!k || !k->enabled)
+                    continue;
+
                 const auto DISPATCHER = g_pKeybindManager->m_dispatchers.find(k->handler);
 
                 Log::logger->log(Log::DEBUG, "Keybind repeat triggered, calling dispatcher.");
@@ -175,11 +180,14 @@ CKeybindManager::~CKeybindManager() {
     }
 }
 
-void CKeybindManager::addKeybind(SKeybind kb) {
-    m_keybinds.emplace_back(makeShared<SKeybind>(kb));
+SP<SKeybind> CKeybindManager::addKeybind(SKeybind kb) {
+    const auto KEYBIND = makeShared<SKeybind>(kb);
+    m_keybinds.emplace_back(KEYBIND);
 
     m_activeKeybinds.clear();
     m_lastLongPressKeybind.reset();
+
+    return KEYBIND;
 }
 
 void CKeybindManager::removeKeybind(uint32_t mod, const SParsedKey& key) {
@@ -522,6 +530,8 @@ SDispatchResult CKeybindManager::handleKeybinds(const uint32_t modmask, const SP
     bool            found = false;
     SDispatchResult res;
 
+    std::erase_if(m_pressedSpecialBinds, [](const auto& k) { return !k || !k->enabled; });
+
     // Skip keysym tracking for events with no keysym (e.g., scroll wheel events).
     // Scroll events have keysym=0 and are always "pressed" (never released),
     // so without this check, 0 gets inserted into m_mkKeys and never removed,
@@ -547,6 +557,9 @@ SDispatchResult CKeybindManager::handleKeybinds(const uint32_t modmask, const SP
             SPECIALDISPATCHER && !pressed && SPECIALTRIGGERED; // ignore mods. Pass, global dispatchers should be released immediately once the key is released.
 
         if (!k->dontInhibit && !*PDISABLEINHIBIT && PROTO::shortcutsInhibit->isInhibited())
+            continue;
+
+        if (!k->enabled)
             continue;
 
         if (!k->locked && g_pSessionLockManager->isSessionLocked())
@@ -715,6 +728,11 @@ void CKeybindManager::shadowKeybinds(const xkb_keysym_t& doesntHave, const uint3
     // shadow disables keybinds after one has been triggered
 
     for (auto& k : m_keybinds) {
+
+        if (!k->enabled) {
+            k->shadowed = false;
+            continue;
+        }
 
         bool shadow = false;
 

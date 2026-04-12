@@ -33,6 +33,8 @@ void CMonitorRuleManager::clear() {
 void CMonitorRuleManager::add(CMonitorRule&& x) {
     std::erase_if(m_rules, [&x](const auto& e) { return e.m_name == x.m_name; });
     m_rules.emplace_back(std::move(x));
+
+    scheduleReload();
 }
 
 CMonitorRule CMonitorRuleManager::get(const PHLMONITOR PMONITOR) {

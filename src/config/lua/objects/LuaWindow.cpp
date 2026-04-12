@@ -4,21 +4,36 @@
 #include "LuaObjectHelpers.hpp"
 
 #include "../../../desktop/view/Window.hpp"
+#include "../../../desktop/view/Group.hpp"
 #include "../../../desktop/Workspace.hpp"
 #include "../../../desktop/state/FocusState.hpp"
+#include "../../../desktop/history/WindowHistoryTracker.hpp"
 #include "../../../layout/algorithm/Algorithm.hpp"
 #include "../../../layout/algorithm/tiled/master/MasterAlgorithm.hpp"
 #include "../../../layout/algorithm/tiled/scrolling/ScrollingAlgorithm.hpp"
 #include "../../../layout/algorithm/tiled/dwindle/DwindleAlgorithm.hpp"
 #include "../../../layout/space/Space.hpp"
 #include "../../../layout/supplementary/WorkspaceAlgoMatcher.hpp"
+#include "../../../managers/input/InputManager.hpp"
 
 #include <format>
 #include <string_view>
 
+using namespace Config::Lua;
+
 static constexpr const char* MT = "HL.Window";
 
-static int                   windowIndex(lua_State* L) {
+static int                   getFocusHistoryID(PHLWINDOW wnd) {
+    const auto& history = Desktop::History::windowTracker()->fullHistory();
+    for (size_t i = 0; i < history.size(); ++i) {
+        if (history[i].lock() == wnd)
+            return static_cast<int>(history.size() - i - 1); // reverse order for backwards compat
+    }
+
+    return -1;
+}
+
+static int windowIndex(lua_State* L) {
     auto*      ref = static_cast<PHLWINDOWREF*>(luaL_checkudata(L, 1, MT));
     const auto w   = ref->lock();
     if (!w) {
@@ -49,7 +64,7 @@ static int                   windowIndex(lua_State* L) {
         lua_setfield(L, -2, "y");
     } else if (key == "workspace") {
         if (w->m_workspace)
-            Config::Lua::Objects::CLuaWorkspace::push(L, w->m_workspace);
+            Objects::CLuaWorkspace::push(L, w->m_workspace);
         else
             lua_pushnil(L);
     } else if (key == "floating")
@@ -57,7 +72,7 @@ static int                   windowIndex(lua_State* L) {
     else if (key == "monitor") {
         const auto mon = w->m_monitor.lock();
         if (mon)
-            Config::Lua::Objects::CLuaMonitor::push(L, mon);
+            Objects::CLuaMonitor::push(L, mon);
         else
             lua_pushnil(L);
     } else if (key == "class")
@@ -80,6 +95,76 @@ static int                   windowIndex(lua_State* L) {
         lua_pushinteger(L, static_cast<lua_Integer>(static_cast<uint8_t>(w->m_fullscreenState.client)));
     else if (key == "over_fullscreen")
         lua_pushboolean(L, w->m_createdOverFullscreen);
+    else if (key == "group") {
+        if (!w->m_group) {
+            lua_pushnil(L);
+            return 1;
+        }
+
+        lua_newtable(L);
+
+        lua_pushboolean(L, w->m_group->locked());
+        lua_setfield(L, -2, "locked");
+
+        lua_pushboolean(L, w->m_group->denied());
+        lua_setfield(L, -2, "denied");
+
+        lua_pushinteger(L, static_cast<lua_Integer>(w->m_group->size()));
+        lua_setfield(L, -2, "size");
+
+        lua_pushinteger(L, static_cast<lua_Integer>(w->m_group->getCurrentIdx()) + 1);
+        lua_setfield(L, -2, "current_index");
+
+        const auto current = w->m_group->current();
+        if (current)
+            Objects::CLuaWindow::push(L, current);
+        else
+            lua_pushnil(L);
+        lua_setfield(L, -2, "current");
+
+        lua_newtable(L);
+        int i = 1;
+        for (const auto& grouped : w->m_group->windows()) {
+            const auto groupedWindow = grouped.lock();
+            if (!groupedWindow)
+                continue;
+
+            Objects::CLuaWindow::push(L, groupedWindow);
+            lua_rawseti(L, -2, i++);
+        }
+        lua_setfield(L, -2, "members");
+    } else if (key == "tags") {
+        lua_newtable(L);
+
+        int i = 1;
+        for (const auto& tag : w->m_ruleApplicator->m_tagKeeper.getTags()) {
+            lua_pushstring(L, tag.c_str());
+            lua_rawseti(L, -2, i++);
+        }
+    } else if (key == "swallowing") {
+        const auto swallowed = w->m_swallowed.lock();
+        if (swallowed)
+            Objects::CLuaWindow::push(L, swallowed);
+        else
+            lua_pushnil(L);
+    } else if (key == "focus_history_id")
+        lua_pushinteger(L, static_cast<lua_Integer>(getFocusHistoryID(w)));
+    else if (key == "inhibiting_idle")
+        lua_pushboolean(L, g_pInputManager && g_pInputManager->isWindowInhibiting(w, false));
+    else if (key == "xdg_tag") {
+        const auto xdgTag = w->xdgTag();
+        if (xdgTag)
+            lua_pushstring(L, xdgTag->c_str());
+        else
+            lua_pushnil(L);
+    } else if (key == "xdg_description") {
+        const auto xdgDescription = w->xdgDescription();
+        if (xdgDescription)
+            lua_pushstring(L, xdgDescription->c_str());
+        else
+            lua_pushnil(L);
+    } else if (key == "content_type")
+        lua_pushstring(L, NContentType::toString(w->getContentType()).c_str());
     else if (key == "stable_id")
         lua_pushinteger(L, static_cast<lua_Integer>(w->m_stableID));
     else if (key == "layout") {
@@ -138,7 +223,7 @@ static int                   windowIndex(lua_State* L) {
                         if (t) {
                             const auto win = t->window();
                             if (win) {
-                                Config::Lua::Objects::CLuaWindow::push(L, win);
+                                Objects::CLuaWindow::push(L, win);
                                 lua_rawseti(L, -2, i++);
                             }
                         }
@@ -160,14 +245,12 @@ static int                   windowIndex(lua_State* L) {
     return 1;
 }
 
-namespace Config::Lua::Objects {
-    void CLuaWindow::setup(lua_State* L) {
-        registerMetatable(L, MT, windowIndex, gcRef<PHLWINDOWREF>);
-    }
+void Objects::CLuaWindow::setup(lua_State* L) {
+    registerMetatable(L, MT, windowIndex, gcRef<PHLWINDOWREF>);
+}
 
-    void CLuaWindow::push(lua_State* L, PHLWINDOW w) {
-        new (lua_newuserdata(L, sizeof(PHLWINDOWREF))) PHLWINDOWREF(w ? w->m_self : nullptr);
-        luaL_getmetatable(L, MT);
-        lua_setmetatable(L, -2);
-    }
+void Objects::CLuaWindow::push(lua_State* L, PHLWINDOW w) {
+    new (lua_newuserdata(L, sizeof(PHLWINDOWREF))) PHLWINDOWREF(w ? w->m_self : nullptr);
+    luaL_getmetatable(L, MT);
+    lua_setmetatable(L, -2);
 }

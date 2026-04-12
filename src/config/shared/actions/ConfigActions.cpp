@@ -530,13 +530,18 @@ ActionResult Actions::moveCursorToCorner(int corner, std::optional<PHLWINDOW> w)
     return {};
 }
 
-ActionResult Actions::resizeBy(const Vector2D& delta, std::optional<PHLWINDOW> w) {
+ActionResult Actions::resize(const Vector2D& size, bool relative, std::optional<PHLWINDOW> w) {
     auto window = xtract(w);
     if (!window)
         return std::unexpected("No target found.");
 
     if (window->isFullscreen())
         return std::unexpected("Window is fullscreen");
+
+    if (!relative && (size.x < 1 || size.y < 1))
+        return std::unexpected("Invalid size");
+
+    const auto delta = relative ? size : size - window->m_realSize->goal();
 
     g_layoutManager->resizeTarget(delta, window->layoutTarget());
 
@@ -546,13 +551,15 @@ ActionResult Actions::resizeBy(const Vector2D& delta, std::optional<PHLWINDOW> w
     return {};
 }
 
-ActionResult Actions::moveBy(const Vector2D& delta, std::optional<PHLWINDOW> w) {
+ActionResult Actions::move(const Vector2D& pos, bool relative, std::optional<PHLWINDOW> w) {
     auto window = xtract(w);
     if (!window)
         return std::unexpected("No target found.");
 
     if (window->isFullscreen())
         return std::unexpected("Window is fullscreen");
+
+    const auto delta = relative ? pos : pos - window->m_realPosition->goal();
 
     g_layoutManager->moveTarget(delta, window->layoutTarget());
 

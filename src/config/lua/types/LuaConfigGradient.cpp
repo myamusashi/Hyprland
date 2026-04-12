@@ -30,7 +30,7 @@ SParseError CLuaConfigGradient::parse(lua_State* s) {
     }
 
     if (!lua_istable(s, -1))
-        return {.errorCode = PARSE_ERROR_BAD_TYPE, .message = "gradient type requires a color string or a table with \"colors\" and optional \"angle\""};
+        return {.errorCode = PARSE_ERROR_BAD_TYPE, .message = R"(gradient type requires a color string or a table with "colors" and optional "angle")"};
 
     // read colors array
     lua_getfield(s, -1, "colors");
@@ -93,7 +93,35 @@ void const* CLuaConfigGradient::data() {
 }
 
 std::string CLuaConfigGradient::toString() {
-    return m_data.toString();
+    std::string result;
+
+    for (size_t i = 0; i < m_data.m_colors.size(); ++i) {
+        if (i > 0)
+            result += ' ';
+        result += std::format("0x{:08X}", m_data.m_colors[i].getAsHex());
+    }
+
+    if (!result.empty())
+        result += ' ';
+
+    result += std::format("{}deg", static_cast<int>(m_data.m_angle * 180.0 / std::numbers::pi_v<float>));
+
+    return result;
+}
+
+void CLuaConfigGradient::push(lua_State* s) {
+    lua_createtable(s, 0, 2);
+
+    lua_createtable(s, m_data.m_colors.size(), 0);
+    for (size_t i = 0; i < m_data.m_colors.size(); ++i) {
+        const auto col = std::format("0x{:08X}", m_data.m_colors[i].getAsHex());
+        lua_pushstring(s, col.c_str());
+        lua_rawseti(s, -2, i + 1);
+    }
+    lua_setfield(s, -2, "colors");
+
+    lua_pushnumber(s, m_data.m_angle * 180.0 / std::numbers::pi);
+    lua_setfield(s, -2, "angle");
 }
 
 const CGradientValueData& CLuaConfigGradient::parsed() {

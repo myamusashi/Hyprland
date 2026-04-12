@@ -57,6 +57,7 @@ CLuaEventHandler::CLuaEventHandler(lua_State* L) : m_lua(L) {
     m_listeners.push_back(bus()->m_events.window.class_.listen([this](PHLWINDOW w) { dispatch("window.class", 1, [&] { CLuaWindow::push(m_lua, w); }); }));
     m_listeners.push_back(bus()->m_events.window.pin.listen([this](PHLWINDOW w) { dispatch("window.pin", 1, [&] { CLuaWindow::push(m_lua, w); }); }));
     m_listeners.push_back(bus()->m_events.window.fullscreen.listen([this](PHLWINDOW w) { dispatch("window.fullscreen", 1, [&] { CLuaWindow::push(m_lua, w); }); }));
+    m_listeners.push_back(bus()->m_events.window.updateRules.listen([this](PHLWINDOW w) { dispatch("window.update_rules", 1, [&] { CLuaWindow::push(m_lua, w); }); }));
     m_listeners.push_back(bus()->m_events.window.moveToWorkspace.listen([this](PHLWINDOW w, PHLWORKSPACE ws) {
         dispatch("window.move_to_workspace", 2, [&] {
             CLuaWindow::push(m_lua, w);
@@ -119,18 +120,31 @@ bool CLuaEventHandler::registerEvent(const std::string& name, int luaRef) {
 
 const std::unordered_set<std::string>& CLuaEventHandler::knownEvents() {
     static const std::unordered_set<std::string> EVENTS = {
-        "window.open",       "window.open_early",
-        "window.close",      "window.destroy",
-        "window.kill",       "window.active",
-        "window.urgent",     "window.title",
-        "window.class",      "window.pin",
-        "window.fullscreen", "window.move_to_workspace",
-        "layer.opened",      "layer.closed",
-        "monitor.added",     "monitor.removed",
-        "monitor.focused",   "monitor.layout_changed",
-        "workspace.active",  "workspace.created",
-        "workspace.removed", "workspace.move_to_monitor",
-        "config.reloaded",   "keybinds.submap",
+        "window.open",
+        "window.open_early",
+        "window.close",
+        "window.destroy",
+        "window.kill",
+        "window.active",
+        "window.urgent",
+        "window.title",
+        "window.class",
+        "window.pin",
+        "window.fullscreen",
+        "window.update_rules",
+        "window.move_to_workspace",
+        "layer.opened",
+        "layer.closed",
+        "monitor.added",
+        "monitor.removed",
+        "monitor.focused",
+        "monitor.layout_changed",
+        "workspace.active",
+        "workspace.created",
+        "workspace.removed",
+        "workspace.move_to_monitor",
+        "config.reloaded",
+        "keybinds.submap",
         "screenshare.state",
     };
     return EVENTS;
