@@ -815,6 +815,1508 @@ void CKeybindManager::clearKeybinds() {
     m_keybinds.clear();
 }
 
+static SDispatchResult toggleActiveFloatingCore(std::string args, std::optional<bool> floatState) {
+    PHLWINDOW PWINDOW = nullptr;
+
+    if (args != "active" && args.length() > 1)
+        PWINDOW = g_pCompositor->getWindowByRegex(args);
+    else
+        PWINDOW = Desktop::focusState()->window();
+
+    if (!PWINDOW)
+        return {.success = false, .error = "Window not found"};
+
+    if (floatState.has_value() && floatState == PWINDOW->m_isFloating)
+        return {};
+
+    // remove drag status
+    if (g_layoutManager->dragController()->target())
+        CKeybindManager::changeMouseBindMode(MBIND_INVALID);
+
+    g_layoutManager->changeFloatingMode(PWINDOW->layoutTarget());
+
+    if (PWINDOW->m_workspace) {
+        PWINDOW->m_workspace->updateWindows();
+        PWINDOW->m_workspace->updateWindowData();
+    }
+
+    g_pCompositor->updateAllWindowsAnimatedDecorationValues();
+
+    return {};
+}
+
+SDispatchResult CKeybindManager::toggleActiveFloating(std::string args) {
+    return toggleActiveFloatingCore(args, std::nullopt);
+}
+
+SDispatchResult CKeybindManager::setActiveFloating(std::string args) {
+    return toggleActiveFloatingCore(args, true);
+}
+
+SDispatchResult CKeybindManager::setActiveTiled(std::string args) {
+    return toggleActiveFloatingCore(args, false);
+}
+
+SDispatchResult CKeybindManager::centerWindow(std::string args) {
+    const auto PWINDOW = Desktop::focusState()->window();
+
+    if (!PWINDOW || !PWINDOW->m_isFloating || PWINDOW->isFullscreen())
+        return {.success = false, .error = "No floating window found"};
+
+    const auto PMONITOR = PWINDOW->m_monitor.lock();
+
+    PWINDOW->layoutTarget()->setPositionGlobal(CBox{PMONITOR->logicalBoxMinusReserved().middle() - PWINDOW->m_realSize->goal() / 2.F, PWINDOW->layoutTarget()->position().size()});
+
+    return {};
+}
+
+SDispatchResult CKeybindManager::toggleActivePseudo(std::string args) {
+    PHLWINDOW PWINDOW = nullptr;
+
+    if (args != "active" && args.length() > 1)
+        PWINDOW = g_pCompositor->getWindowByRegex(args);
+    else
+        PWINDOW = Desktop::focusState()->window();
+
+    if (!PWINDOW)
+        return {.success = false, .error = "Window not found"};
+
+    PWINDOW->layoutTarget()->setPseudo(!PWINDOW->layoutTarget()->isPseudo());
+
+    return {};
+}
+
+static SWorkspaceIDName getWorkspaceToChangeFromArgs(std::string args, PHLWORKSPACE PCURRENTWORKSPACE, PHLMONITORREF PMONITOR) {
+    if (!args.starts_with("previous")) {
+        return getWorkspaceIDNameFromString(args);
+    }
+
+    const bool             PER_MON = args.contains("_per_monitor");
+    const SWorkspaceIDName PPREVWS = PER_MON ? Desktop::History::workspaceTracker()->previousWorkspaceIDName(PCURRENTWORKSPACE, PMONITOR.lock()) :
+                                               Desktop::History::workspaceTracker()->previousWorkspaceIDName(PCURRENTWORKSPACE);
+    // Do nothing if there's no previous workspace, otherwise switch to it.
+    if (PPREVWS.id == -1 || PPREVWS.id == PCURRENTWORKSPACE->m_id) {
+        Log::logger->log(Log::DEBUG, "No previous workspace to change to");
+        return {.id = WORKSPACE_NOT_CHANGED};
+    }
+
+    if (const auto PWORKSPACETOCHANGETO = g_pCompositor->getWorkspaceByID(PPREVWS.id); PWORKSPACETOCHANGETO) {
+        return {.id = PWORKSPACETOCHANGETO->m_id, .name = PWORKSPACETOCHANGETO->m_name};
+    }
+
+    return {.id = PPREVWS.id, .name = PPREVWS.name.empty() ? std::to_string(PPREVWS.id) : PPREVWS.name};
+}
+
+SDispatchResult CKeybindManager::changeworkspace(std::string args) {
+    // Workspace_back_and_forth being enabled means that an attempt to switch to
+    // the current workspace will instead switch to the previous.
+    static auto PBACKANDFORTH                 = CConfigValue<CONFIG::INTEGER>("binds:workspace_back_and_forth");
+    static auto PWORKSPACECENTERON            = CConfigValue<CONFIG::INTEGER>("binds:workspace_center_on");
+    static auto PHIDESPECIALONWORKSPACECHANGE = CConfigValue<CONFIG::INTEGER>("binds:hide_special_on_workspace_change");
+
+    const auto  PMONITOR = Desktop::focusState()->monitor();
+
+    if (!PMONITOR)
+        return {.success = false, .error = "Last monitor not found"};
+
+    const auto PCURRENTWORKSPACE = PMONITOR->m_activeWorkspace;
+    const bool EXPLICITPREVIOUS  = args.contains("previous");
+
+    const auto& [workspaceToChangeTo, workspaceName, isAutoID] = getWorkspaceToChangeFromArgs(args, PCURRENTWORKSPACE, PMONITOR);
+    if (workspaceToChangeTo == WORKSPACE_INVALID) {
+        Log::logger->log(Log::ERR, "Error in changeworkspace, invalid value");
+        return {.success = false, .error = "Error in changeworkspace, invalid value"};
+    }
+
+    if (workspaceToChangeTo == WORKSPACE_NOT_CHANGED)
+        return {};
+
+    const SWorkspaceIDName PPREVWS = args.contains("_per_monitor") ? Desktop::History::workspaceTracker()->previousWorkspaceIDName(PCURRENTWORKSPACE, PMONITOR) :
+                                                                     Desktop::History::workspaceTracker()->previousWorkspaceIDName(PCURRENTWORKSPACE);
+
+    const bool             BISWORKSPACECURRENT = workspaceToChangeTo == PCURRENTWORKSPACE->m_id;
+    if (BISWORKSPACECURRENT && (!(*PBACKANDFORTH || EXPLICITPREVIOUS) || PPREVWS.id == -1)) {
+        if (*PHIDESPECIALONWORKSPACECHANGE)
+            PMONITOR->setSpecialWorkspace(nullptr);
+
+        return {.success = false, .error = "Previous workspace doesn't exist"};
+    }
+
+    g_pInputManager->unconstrainMouse();
+    g_pInputManager->m_emptyFocusCursorSet = false;
+
+    auto pWorkspaceToChangeTo = g_pCompositor->getWorkspaceByID(BISWORKSPACECURRENT ? PPREVWS.id : workspaceToChangeTo);
+    if (!pWorkspaceToChangeTo)
+        pWorkspaceToChangeTo =
+            g_pCompositor->createNewWorkspace(BISWORKSPACECURRENT ? PPREVWS.id : workspaceToChangeTo, PMONITOR->m_id, BISWORKSPACECURRENT ? PPREVWS.name : workspaceName);
+
+    if (!BISWORKSPACECURRENT && pWorkspaceToChangeTo->m_isSpecialWorkspace) {
+        PMONITOR->setSpecialWorkspace(pWorkspaceToChangeTo);
+        g_pInputManager->simulateMouseMovement();
+        return {};
+    }
+
+    g_pInputManager->releaseAllMouseButtons();
+
+    const auto PMONITORWORKSPACEOWNER = PMONITOR == pWorkspaceToChangeTo->m_monitor ? PMONITOR : pWorkspaceToChangeTo->m_monitor.lock();
+
+    if (!PMONITORWORKSPACEOWNER)
+        return {.success = false, .error = "Workspace to switch to has no monitor"};
+
+    updateRelativeCursorCoords();
+
+    Desktop::focusState()->rawMonitorFocus(PMONITORWORKSPACEOWNER);
+
+    if (*PHIDESPECIALONWORKSPACECHANGE)
+        PMONITORWORKSPACEOWNER->setSpecialWorkspace(nullptr);
+    PMONITORWORKSPACEOWNER->changeWorkspace(pWorkspaceToChangeTo, false, true);
+
+    if (PMONITOR != PMONITORWORKSPACEOWNER) {
+        Vector2D middle = PMONITORWORKSPACEOWNER->middle();
+        if (const auto PLAST = pWorkspaceToChangeTo->getLastFocusedWindow(); PLAST) {
+            Desktop::focusState()->fullWindowFocus(PLAST, Desktop::FOCUS_REASON_KEYBIND);
+            if (*PWORKSPACECENTERON == 1)
+                middle = PLAST->middle();
+        }
+        g_pCompositor->warpCursorTo(middle);
+    }
+
+    if (!g_pInputManager->m_lastFocusOnLS) {
+        if (Desktop::focusState()->surface())
+            g_pInputManager->sendMotionEventsToFocused();
+        else
+            g_pInputManager->simulateMouseMovement();
+    }
+
+    const static auto PWARPONWORKSPACECHANGE = CConfigValue<CONFIG::INTEGER>("cursor:warp_on_change_workspace");
+
+    if (*PWARPONWORKSPACECHANGE > 0) {
+        auto PLAST     = pWorkspaceToChangeTo->getLastFocusedWindow();
+        auto HLSurface = Desktop::View::CWLSurface::fromResource(g_pSeatManager->m_state.pointerFocus.lock());
+
+        if (PLAST && (!HLSurface || HLSurface->view()->type() == Desktop::View::VIEW_TYPE_WINDOW))
+            PLAST->warpCursor(*PWARPONWORKSPACECHANGE == 2);
+    }
+
+    return {};
+}
+
+SDispatchResult CKeybindManager::fullscreenActive(std::string args) {
+    const auto PWINDOW = Desktop::focusState()->window();
+    const auto ARGS    = CConstVarList(args, 2, ' ');
+
+    if (!PWINDOW)
+        return {.success = false, .error = "Window not found"};
+
+    const eFullscreenMode MODE = ARGS.size() > 0 && ARGS[0] == "1" ? FSMODE_MAXIMIZED : FSMODE_FULLSCREEN;
+
+    if (ARGS.size() <= 1 || ARGS[1] == "toggle") {
+        if (PWINDOW->isEffectiveInternalFSMode(MODE))
+            g_pCompositor->setWindowFullscreenInternal(PWINDOW, FSMODE_NONE);
+        else
+            g_pCompositor->setWindowFullscreenInternal(PWINDOW, MODE);
+    } else {
+        if (ARGS[1] == "set")
+            g_pCompositor->setWindowFullscreenInternal(PWINDOW, MODE);
+        else if (ARGS[1] == "unset")
+            g_pCompositor->setWindowFullscreenInternal(PWINDOW, FSMODE_NONE);
+    }
+
+    return {};
+}
+
+SDispatchResult CKeybindManager::fullscreenStateActive(std::string args) {
+    const auto PWINDOW = Desktop::focusState()->window();
+    const auto ARGS    = CVarList(args, 3, ' ');
+
+    if (!PWINDOW)
+        return {.success = false, .error = "Window not found"};
+
+    PWINDOW->m_ruleApplicator->syncFullscreenOverride(Desktop::Types::COverridableVar(false, Desktop::Types::PRIORITY_SET_PROP));
+
+    int internalMode, clientMode;
+    try {
+        internalMode = std::stoi(ARGS[0]);
+    } catch (std::exception& e) { internalMode = -1; }
+    try {
+        clientMode = std::stoi(ARGS[1]);
+    } catch (std::exception& e) { clientMode = -1; }
+
+    const Desktop::View::SFullscreenState STATE =
+        Desktop::View::SFullscreenState{.internal = (internalMode != -1 ? sc<eFullscreenMode>(internalMode) : PWINDOW->m_fullscreenState.internal),
+                                        .client   = (clientMode != -1 ? sc<eFullscreenMode>(clientMode) : PWINDOW->m_fullscreenState.client)};
+
+    if (ARGS.size() <= 2 || ARGS[2] == "toggle") {
+        if (internalMode != -1 && clientMode != -1 && PWINDOW->m_fullscreenState.internal == STATE.internal && PWINDOW->m_fullscreenState.client == STATE.client)
+            g_pCompositor->setWindowFullscreenState(PWINDOW, Desktop::View::SFullscreenState{.internal = FSMODE_NONE, .client = FSMODE_NONE});
+        else if (internalMode != -1 && clientMode == -1 && PWINDOW->m_fullscreenState.internal == STATE.internal)
+            g_pCompositor->setWindowFullscreenState(PWINDOW, Desktop::View::SFullscreenState{.internal = FSMODE_NONE, .client = PWINDOW->m_fullscreenState.client});
+        else if (internalMode == -1 && clientMode != -1 && PWINDOW->m_fullscreenState.client == STATE.client)
+            g_pCompositor->setWindowFullscreenState(PWINDOW, Desktop::View::SFullscreenState{.internal = PWINDOW->m_fullscreenState.internal, .client = FSMODE_NONE});
+        else
+            g_pCompositor->setWindowFullscreenState(PWINDOW, STATE);
+    } else if (ARGS[2] == "set") {
+        g_pCompositor->setWindowFullscreenState(PWINDOW, STATE);
+    }
+
+    PWINDOW->m_ruleApplicator->syncFullscreenOverride(
+        Desktop::Types::COverridableVar(PWINDOW->m_fullscreenState.internal == PWINDOW->m_fullscreenState.client, Desktop::Types::PRIORITY_SET_PROP));
+
+    return {};
+}
+
+SDispatchResult CKeybindManager::moveActiveToWorkspace(std::string args) {
+
+    PHLWINDOW PWINDOW = nullptr;
+
+    if (args.contains(',')) {
+        PWINDOW = g_pCompositor->getWindowByRegex(args.substr(args.find_last_of(',') + 1));
+        args    = args.substr(0, args.find_last_of(','));
+    } else {
+        PWINDOW = Desktop::focusState()->window();
+    }
+
+    if (!PWINDOW)
+        return {.success = false, .error = "Window not found"};
+
+    const auto& [WORKSPACEID, workspaceName, isAutoID] = getWorkspaceIDNameFromString(args);
+    if (WORKSPACEID == WORKSPACE_INVALID) {
+        Log::logger->log(Log::DEBUG, "Invalid workspace in moveActiveToWorkspace");
+        return {.success = false, .error = "Invalid workspace in moveActiveToWorkspace"};
+    }
+
+    if (WORKSPACEID == PWINDOW->workspaceID()) {
+        Log::logger->log(Log::DEBUG, "Not moving to workspace because it didn't change.");
+        return {.success = false, .error = "Not moving to workspace because it didn't change."};
+    }
+
+    auto       pWorkspace = g_pCompositor->getWorkspaceByID(WORKSPACEID);
+    PHLMONITOR pMonitor   = nullptr;
+    const auto POLDWS     = PWINDOW->m_workspace;
+
+    updateRelativeCursorCoords();
+
+    g_pHyprRenderer->damageWindow(PWINDOW);
+
+    if (pWorkspace) {
+        const auto FULLSCREENMODE = PWINDOW->m_fullscreenState.internal;
+        g_pCompositor->moveWindowToWorkspaceSafe(PWINDOW, pWorkspace);
+        pMonitor = pWorkspace->m_monitor.lock();
+        Desktop::focusState()->rawMonitorFocus(pMonitor);
+        g_pCompositor->setWindowFullscreenInternal(PWINDOW, FULLSCREENMODE);
+    } else {
+        pWorkspace = g_pCompositor->createNewWorkspace(WORKSPACEID, PWINDOW->monitorID(), workspaceName, false);
+        pMonitor   = pWorkspace->m_monitor.lock();
+        g_pCompositor->moveWindowToWorkspaceSafe(PWINDOW, pWorkspace);
+    }
+
+    POLDWS->m_lastFocusedWindow = POLDWS->getFirstWindow();
+
+    if (pWorkspace->m_isSpecialWorkspace)
+        pMonitor->setSpecialWorkspace(pWorkspace);
+    else if (POLDWS->m_isSpecialWorkspace)
+        POLDWS->m_monitor.lock()->setSpecialWorkspace(nullptr);
+
+    pMonitor->changeWorkspace(pWorkspace);
+
+    Desktop::focusState()->fullWindowFocus(PWINDOW, Desktop::FOCUS_REASON_KEYBIND);
+    PWINDOW->warpCursor();
+
+    return {};
+}
+
+SDispatchResult CKeybindManager::moveActiveToWorkspaceSilent(std::string args) {
+    PHLWINDOW PWINDOW = nullptr;
+
+    if (args.contains(',')) {
+        PWINDOW = g_pCompositor->getWindowByRegex(args.substr(args.find_last_of(',') + 1));
+        args    = args.substr(0, args.find_last_of(','));
+    } else {
+        PWINDOW = Desktop::focusState()->window();
+    }
+
+    if (!PWINDOW)
+        return {.success = false, .error = "Window not found"};
+
+    const auto& [WORKSPACEID, workspaceName, isAutoID] = getWorkspaceIDNameFromString(args);
+    if (WORKSPACEID == WORKSPACE_INVALID) {
+        Log::logger->log(Log::ERR, "Error in moveActiveToWorkspaceSilent, invalid value");
+        return {.success = false, .error = "Error in moveActiveToWorkspaceSilent, invalid value"};
+    }
+
+    if (WORKSPACEID == PWINDOW->workspaceID())
+        return {};
+
+    g_pHyprRenderer->damageWindow(PWINDOW);
+
+    auto       pWorkspace = g_pCompositor->getWorkspaceByID(WORKSPACEID);
+    const auto OLDMIDDLE  = PWINDOW->middle();
+
+    if (pWorkspace) {
+        g_pCompositor->moveWindowToWorkspaceSafe(PWINDOW, pWorkspace);
+    } else {
+        pWorkspace = g_pCompositor->createNewWorkspace(WORKSPACEID, PWINDOW->monitorID(), workspaceName, false);
+        g_pCompositor->moveWindowToWorkspaceSafe(PWINDOW, pWorkspace);
+    }
+
+    if (PWINDOW == Desktop::focusState()->window()) {
+        if (const auto PATCOORDS =
+                g_pCompositor->vectorToWindowUnified(OLDMIDDLE, Desktop::View::RESERVED_EXTENTS | Desktop::View::INPUT_EXTENTS | Desktop::View::ALLOW_FLOATING, PWINDOW);
+            PATCOORDS)
+            Desktop::focusState()->fullWindowFocus(PATCOORDS, Desktop::FOCUS_REASON_KEYBIND);
+        else
+            g_pInputManager->refocus();
+    }
+
+    return {};
+}
+
+SDispatchResult CKeybindManager::moveFocusTo(std::string args) {
+    static auto      PFULLCYCLE       = CConfigValue<CONFIG::INTEGER>("binds:movefocus_cycles_fullscreen");
+    static auto      PGROUPCYCLE      = CConfigValue<CONFIG::INTEGER>("binds:movefocus_cycles_groupfirst");
+    static auto      PMONITORFALLBACK = CConfigValue<CONFIG::INTEGER>("binds:window_direction_monitor_fallback");
+    Math::eDirection dir              = Math::fromChar(args[0]);
+
+    if (dir == Math::DIRECTION_DEFAULT) {
+        Log::logger->log(Log::ERR, "Cannot move focus in direction {}, unsupported direction. Supported: l,r,u/t,d/b", args[0]);
+        return {.success = false, .error = std::format("Cannot move focus in direction {}, unsupported direction. Supported: l,r,u/t,d/b", args[0])};
+    }
+
+    const auto PLASTWINDOW = Desktop::focusState()->window();
+    if (!PLASTWINDOW || !PLASTWINDOW->aliveAndVisible()) {
+        if (*PMONITORFALLBACK)
+            tryMoveFocusToMonitor(g_pCompositor->getMonitorInDirection(dir));
+        return {};
+    }
+
+    const auto PWINDOWTOCHANGETO = *PFULLCYCLE && PLASTWINDOW->isFullscreen() ?
+        g_pCompositor->getWindowCycle(PLASTWINDOW, true, {}, false, dir != Math::DIRECTION_DOWN && dir != Math::DIRECTION_RIGHT) :
+        g_pCompositor->getWindowInDirection(PLASTWINDOW, dir);
+
+    // Prioritize focus change within groups if the window is a part of it.
+    if (*PGROUPCYCLE && PLASTWINDOW->m_group) {
+        auto isTheOnlyGroupOnWs = !PWINDOWTOCHANGETO && g_pCompositor->m_monitors.size() == 1;
+        if (dir == Math::DIRECTION_LEFT && (PLASTWINDOW != PLASTWINDOW->m_group->head() || isTheOnlyGroupOnWs)) {
+            PLASTWINDOW->m_group->moveCurrent(false);
+            return {};
+        }
+
+        else if (dir == Math::DIRECTION_RIGHT && (PLASTWINDOW != PLASTWINDOW->m_group->tail() || isTheOnlyGroupOnWs)) {
+            PLASTWINDOW->m_group->moveCurrent(true);
+            return {};
+        }
+    }
+
+    // Found window in direction, switch to it
+    if (PWINDOWTOCHANGETO) {
+        switchToWindow(PWINDOWTOCHANGETO, *PFULLCYCLE && PLASTWINDOW->isFullscreen());
+        return {};
+    }
+
+    Log::logger->log(Log::DEBUG, "No window found in direction {}, looking for a monitor", Math::toString(dir));
+
+    if (*PMONITORFALLBACK && tryMoveFocusToMonitor(g_pCompositor->getMonitorInDirection(dir)))
+        return {};
+
+    static auto PNOFALLBACK = CConfigValue<CONFIG::INTEGER>("general:no_focus_fallback");
+    if (*PNOFALLBACK)
+        return {.success = false, .error = std::format("Nothing to focus to in direction {}", Math::toString(dir))};
+
+    Log::logger->log(Log::DEBUG, "No monitor found in direction {}, getting the inverse edge", Math::toString(dir));
+
+    const auto PMONITOR = PLASTWINDOW->m_monitor.lock();
+
+    if (!PMONITOR)
+        return {.success = false, .error = "last window has no monitor?"};
+
+    if (dir == Math::DIRECTION_LEFT || dir == Math::DIRECTION_RIGHT) {
+        if (STICKS(PLASTWINDOW->m_position.x, PMONITOR->m_position.x) && STICKS(PLASTWINDOW->m_size.x, PMONITOR->m_size.x))
+            return {.success = false, .error = "move does not make sense, would return back"};
+    } else if (STICKS(PLASTWINDOW->m_position.y, PMONITOR->m_position.y) && STICKS(PLASTWINDOW->m_size.y, PMONITOR->m_size.y))
+        return {.success = false, .error = "move does not make sense, would return back"};
+
+    CBox box = PMONITOR->logicalBox();
+    switch (dir) {
+        case Math::DIRECTION_LEFT:
+            box.x += box.w;
+            box.w = 1;
+            break;
+        case Math::DIRECTION_RIGHT:
+            box.x -= 1;
+            box.w = 1;
+            break;
+        case Math::DIRECTION_UP:
+            box.y += box.h;
+            box.h = 1;
+            break;
+        case Math::DIRECTION_DOWN:
+            box.y -= 1;
+            box.h = 1;
+            break;
+        default: break;
+    }
+
+    const auto PWINDOWCANDIDATE = g_pCompositor->getWindowInDirection(box, PMONITOR->m_activeSpecialWorkspace ? PMONITOR->m_activeSpecialWorkspace : PMONITOR->m_activeWorkspace,
+                                                                      dir, PLASTWINDOW, PLASTWINDOW->m_isFloating);
+    if (PWINDOWCANDIDATE)
+        switchToWindow(PWINDOWCANDIDATE);
+
+    return {};
+}
+
+SDispatchResult CKeybindManager::focusUrgentOrLast(std::string args) {
+    const auto& HISTORY       = Desktop::History::windowTracker()->fullHistory();
+    const auto  PWINDOWURGENT = g_pCompositor->getUrgentWindow();
+    const auto  PWINDOWPREV   = Desktop::focusState()->window() ? (HISTORY.size() < 2 ? nullptr : HISTORY[1].lock()) : (HISTORY.empty() ? nullptr : HISTORY[0].lock());
+
+    if (!PWINDOWURGENT && !PWINDOWPREV)
+        return {.success = false, .error = "Window not found"};
+
+    switchToWindow(PWINDOWURGENT ? PWINDOWURGENT : PWINDOWPREV);
+
+    return {};
+}
+
+SDispatchResult CKeybindManager::focusCurrentOrLast(std::string args) {
+    const auto& HISTORY = Desktop::History::windowTracker()->fullHistory();
+
+    if (HISTORY.size() <= 1)
+        return {.success = false, .error = "History too short"};
+
+    const auto PWINDOWPREV = HISTORY[HISTORY.size() - 2].lock();
+
+    if (!PWINDOWPREV)
+        return {.success = false, .error = "Window not found"};
+
+    switchToWindow(PWINDOWPREV);
+
+    return {};
+}
+
+SDispatchResult CKeybindManager::swapActive(std::string args) {
+    const auto PLASTWINDOW       = Desktop::focusState()->window();
+    PHLWINDOW  PWINDOWTOCHANGETO = nullptr;
+
+    if (!PLASTWINDOW)
+        return {.success = false, .error = "Window to swap with not found"};
+
+    if (PLASTWINDOW->isFullscreen())
+        return {.success = false, .error = "Can't swap fullscreen window"};
+
+    if (isDirection(args)) {
+        Math::eDirection dir = Math::fromChar(args[0]);
+        PWINDOWTOCHANGETO    = g_pCompositor->getWindowInDirection(PLASTWINDOW, dir);
+    } else
+        PWINDOWTOCHANGETO = g_pCompositor->getWindowByRegex(args);
+
+    if (!PWINDOWTOCHANGETO || PWINDOWTOCHANGETO == PLASTWINDOW) {
+        Log::logger->log(Log::ERR, "Can't swap with {}, invalid window", args);
+        return {.success = false, .error = std::format("Can't swap with {}, invalid window", args)};
+    }
+
+    Log::logger->log(Log::DEBUG, "Swapping active window with {}", args);
+
+    updateRelativeCursorCoords();
+    g_layoutManager->switchTargets(PLASTWINDOW->layoutTarget(), PWINDOWTOCHANGETO->layoutTarget(), true);
+    PLASTWINDOW->warpCursor();
+    return {};
+}
+
+SDispatchResult CKeybindManager::moveActiveTo(std::string args) {
+    bool silent = args.ends_with(" silent");
+    if (silent)
+        args = args.substr(0, args.length() - 7);
+
+    if (args.starts_with("mon:")) {
+        const auto PNEWMONITOR = g_pCompositor->getMonitorFromString(args.substr(4));
+        if (!PNEWMONITOR)
+            return {.success = false, .error = std::format("Monitor {} not found", args.substr(4))};
+
+        if (silent)
+            moveActiveToWorkspaceSilent(PNEWMONITOR->m_activeWorkspace->getConfigName());
+        else
+            moveActiveToWorkspace(PNEWMONITOR->m_activeWorkspace->getConfigName());
+
+        return {};
+    }
+
+    Math::eDirection dir = Math::fromChar(args[0]);
+    if (dir == Math::DIRECTION_DEFAULT) {
+        Log::logger->log(Log::ERR, "Cannot move window in direction {}, unsupported direction. Supported: l,r,u/t,d/b", args[0]);
+        return {.success = false, .error = std::format("Cannot move window in direction {}, unsupported direction. Supported: l,r,u/t,d/b", args[0])};
+    }
+
+    const auto PLASTWINDOW = Desktop::focusState()->window();
+
+    if (!PLASTWINDOW)
+        return {.success = false, .error = "Window to move not found"};
+
+    if (PLASTWINDOW->isFullscreen())
+        return {.success = false, .error = "Can't move fullscreen window"};
+
+    updateRelativeCursorCoords();
+
+    g_layoutManager->moveInDirection(PLASTWINDOW->layoutTarget(), args, silent);
+    if (!silent)
+        PLASTWINDOW->warpCursor();
+
+    return {};
+}
+
+SDispatchResult CKeybindManager::toggleGroup(std::string args) {
+    const auto PWINDOW = Desktop::focusState()->window();
+
+    if (!PWINDOW)
+        return {.success = false, .error = "Window not found"};
+
+    if (PWINDOW->isFullscreen())
+        g_pCompositor->setWindowFullscreenInternal(PWINDOW, FSMODE_NONE);
+
+    if (!PWINDOW->m_group)
+        PWINDOW->m_group = Desktop::View::CGroup::create({PWINDOW});
+    else
+        PWINDOW->m_group->destroy();
+
+    return {};
+}
+
+SDispatchResult CKeybindManager::changeGroupActive(std::string args) {
+    const auto PWINDOW = Desktop::focusState()->window();
+
+    if (!PWINDOW)
+        return {.success = false, .error = "Window not found"};
+
+    if (!PWINDOW->m_group)
+        return {.success = false, .error = "No group"};
+
+    if (PWINDOW->m_group->size() == 1)
+        return {.success = false, .error = "Only one window in group"};
+
+    if (isNumber(args, false)) {
+        // index starts from '1'; '0' means last window
+        try {
+            const int INDEX = std::stoi(args);
+            if (INDEX <= 0)
+                PWINDOW->m_group->setCurrent(PWINDOW->m_group->size() - 1);
+            else
+                PWINDOW->m_group->setCurrent(INDEX - 1);
+        } catch (...) { return {.success = false, .error = "invalid idx"}; }
+
+        return {};
+    }
+
+    if (args != "b" && args != "prev")
+        PWINDOW->m_group->moveCurrent(true);
+    else
+        PWINDOW->m_group->moveCurrent(false);
+
+    return {};
+}
+
+SDispatchResult CKeybindManager::focusMonitor(std::string arg) {
+    const auto PMONITOR = g_pCompositor->getMonitorFromString(arg);
+    tryMoveFocusToMonitor(PMONITOR);
+
+    return {};
+}
+
+SDispatchResult CKeybindManager::moveCursorToCorner(std::string arg) {
+    if (!isNumber(arg)) {
+        Log::logger->log(Log::ERR, "moveCursorToCorner, arg has to be a number.");
+        return {.success = false, .error = "moveCursorToCorner, arg has to be a number."};
+    }
+
+    const auto CORNER = std::stoi(arg);
+
+    if (CORNER < 0 || CORNER > 3) {
+        Log::logger->log(Log::ERR, "moveCursorToCorner, corner not 0 - 3.");
+        return {.success = false, .error = "moveCursorToCorner, corner not 0 - 3."};
+    }
+
+    const auto PWINDOW = Desktop::focusState()->window();
+
+    if (!PWINDOW)
+        return {.success = false, .error = "Window not found"};
+
+    switch (CORNER) {
+        case 0:
+            // bottom left
+            g_pCompositor->warpCursorTo({PWINDOW->m_realPosition->value().x, PWINDOW->m_realPosition->value().y + PWINDOW->m_realSize->value().y}, true);
+            break;
+        case 1:
+            // bottom right
+            g_pCompositor->warpCursorTo({PWINDOW->m_realPosition->value().x + PWINDOW->m_realSize->value().x, PWINDOW->m_realPosition->value().y + PWINDOW->m_realSize->value().y},
+                                        true);
+            break;
+        case 2:
+            // top right
+            g_pCompositor->warpCursorTo({PWINDOW->m_realPosition->value().x + PWINDOW->m_realSize->value().x, PWINDOW->m_realPosition->value().y}, true);
+            break;
+        case 3:
+            // top left
+            g_pCompositor->warpCursorTo({PWINDOW->m_realPosition->value().x, PWINDOW->m_realPosition->value().y}, true);
+            break;
+    }
+
+    return {};
+}
+
+SDispatchResult CKeybindManager::moveCursor(std::string args) {
+    std::string x_str, y_str;
+    int         x, y;
+
+    size_t      i = args.find_first_of(' ');
+    if (i == std::string::npos) {
+        Log::logger->log(Log::ERR, "moveCursor, takes 2 arguments.");
+        return {.success = false, .error = "moveCursor, takes 2 arguments"};
+    }
+
+    x_str = args.substr(0, i);
+    y_str = args.substr(i + 1);
+
+    if (!isNumber(x_str)) {
+        Log::logger->log(Log::ERR, "moveCursor, x argument has to be a number.");
+        return {.success = false, .error = "moveCursor, x argument has to be a number."};
+    }
+    if (!isNumber(y_str)) {
+        Log::logger->log(Log::ERR, "moveCursor, y argument has to be a number.");
+        return {.success = false, .error = "moveCursor, y argument has to be a number."};
+    }
+
+    x = std::stoi(x_str);
+    y = std::stoi(y_str);
+
+    g_pCompositor->warpCursorTo({x, y}, true);
+    g_pInputManager->simulateMouseMovement();
+
+    return {};
+}
+
+SDispatchResult CKeybindManager::workspaceOpt(std::string args) {
+    return {.success = false, .error = "workspaceopt is deprecated"};
+}
+
+SDispatchResult CKeybindManager::renameWorkspace(std::string args) {
+    try {
+        const auto FIRSTSPACEPOS = args.find_first_of(' ');
+        if (FIRSTSPACEPOS != std::string::npos) {
+            int         workspace = std::stoi(args.substr(0, FIRSTSPACEPOS));
+            std::string name      = args.substr(FIRSTSPACEPOS + 1);
+            if (const auto& PWS = g_pCompositor->getWorkspaceByID(workspace); PWS)
+                PWS->rename(name);
+            else
+                return {.success = false, .error = "No such workspace"};
+        } else if (const auto& PWS = g_pCompositor->getWorkspaceByID(std::stoi(args)); PWS)
+            PWS->rename("");
+        else
+            return {.success = false, .error = "No such workspace"};
+    } catch (std::exception& e) {
+        Log::logger->log(Log::ERR, R"(Invalid arg in renameWorkspace, expected numeric id only or a numeric id and string name. "{}": "{}")", args, e.what());
+        return {.success = false, .error = std::format(R"(Invalid arg in renameWorkspace, expected numeric id only or a numeric id and string name. "{}": "{}")", args, e.what())};
+    }
+
+    return {};
+}
+
+SDispatchResult CKeybindManager::exitHyprland(std::string argz) {
+    Event::bus()->m_events.exit.emit();
+
+    if (g_pCompositor->m_finalRequests)
+        return {}; // Exiting deferred until requests complete
+
+    g_pCompositor->stopCompositor();
+    return {};
+}
+
+SDispatchResult CKeybindManager::moveCurrentWorkspaceToMonitor(std::string args) {
+    PHLMONITOR PMONITOR = g_pCompositor->getMonitorFromString(args);
+
+    if (!PMONITOR) {
+        Log::logger->log(Log::ERR, "Ignoring moveCurrentWorkspaceToMonitor: monitor doesn't exist");
+        return {.success = false, .error = "Ignoring moveCurrentWorkspaceToMonitor: monitor doesn't exist"};
+    }
+
+    // get the current workspace
+    const auto PCURRENTWORKSPACE = Desktop::focusState()->monitor()->m_activeWorkspace;
+    if (!PCURRENTWORKSPACE) {
+        Log::logger->log(Log::ERR, "moveCurrentWorkspaceToMonitor invalid workspace!");
+        return {.success = false, .error = "moveCurrentWorkspaceToMonitor invalid workspace!"};
+    }
+
+    g_pCompositor->moveWorkspaceToMonitor(PCURRENTWORKSPACE, PMONITOR);
+
+    return {};
+}
+
+SDispatchResult CKeybindManager::moveWorkspaceToMonitor(std::string args) {
+    if (!args.contains(' '))
+        return {.success = false, .error = "Invalid arguments, expected: workspace monitor"};
+
+    std::string workspace = args.substr(0, args.find_first_of(' '));
+    std::string monitor   = args.substr(args.find_first_of(' ') + 1);
+
+    const auto  PMONITOR = g_pCompositor->getMonitorFromString(monitor);
+
+    if (!PMONITOR) {
+        Log::logger->log(Log::ERR, "Ignoring moveWorkspaceToMonitor: monitor doesn't exist");
+        return {.success = false, .error = "Ignoring moveWorkspaceToMonitor: monitor doesn't exist"};
+    }
+
+    const auto WORKSPACEID = getWorkspaceIDNameFromString(workspace).id;
+
+    if (WORKSPACEID == WORKSPACE_INVALID) {
+        Log::logger->log(Log::ERR, "moveWorkspaceToMonitor invalid workspace!");
+        return {.success = false, .error = "moveWorkspaceToMonitor invalid workspace!"};
+    }
+
+    const auto PWORKSPACE = g_pCompositor->getWorkspaceByID(WORKSPACEID);
+
+    if (!PWORKSPACE) {
+        Log::logger->log(Log::ERR, "moveWorkspaceToMonitor workspace doesn't exist!");
+        return {.success = false, .error = "moveWorkspaceToMonitor workspace doesn't exist!"};
+    }
+
+    g_pCompositor->moveWorkspaceToMonitor(PWORKSPACE, PMONITOR);
+
+    return {};
+}
+
+SDispatchResult CKeybindManager::focusWorkspaceOnCurrentMonitor(std::string args) {
+    auto [workspaceID, workspaceName, isAutoID] = getWorkspaceIDNameFromString(args);
+    if (workspaceID == WORKSPACE_INVALID) {
+        Log::logger->log(Log::ERR, "focusWorkspaceOnCurrentMonitor invalid workspace!");
+        return {.success = false, .error = "focusWorkspaceOnCurrentMonitor invalid workspace!"};
+    }
+
+    const auto PCURRMONITOR = Desktop::focusState()->monitor();
+
+    if (!PCURRMONITOR) {
+        Log::logger->log(Log::ERR, "focusWorkspaceOnCurrentMonitor monitor doesn't exist!");
+        return {.success = false, .error = "focusWorkspaceOnCurrentMonitor monitor doesn't exist!"};
+    }
+
+    auto pWorkspace = g_pCompositor->getWorkspaceByID(workspaceID);
+
+    if (!pWorkspace) {
+        pWorkspace = g_pCompositor->createNewWorkspace(workspaceID, PCURRMONITOR->m_id, workspaceName);
+        // we can skip the moving, since it's already on the current monitor
+        changeworkspace(pWorkspace->getConfigName());
+        return {};
+    }
+
+    static auto PBACKANDFORTH = CConfigValue<CONFIG::INTEGER>("binds:workspace_back_and_forth");
+    const auto  PREVWS        = Desktop::History::workspaceTracker()->previousWorkspaceIDName(pWorkspace);
+
+    if (*PBACKANDFORTH && PCURRMONITOR->activeWorkspaceID() == workspaceID && PREVWS.id != -1) {
+        // Workspace to focus is previous workspace
+        pWorkspace = g_pCompositor->getWorkspaceByID(PREVWS.id);
+        if (!pWorkspace)
+            pWorkspace = g_pCompositor->createNewWorkspace(PREVWS.id, PCURRMONITOR->m_id, PREVWS.name);
+
+        workspaceID = pWorkspace->m_id;
+    }
+
+    if (pWorkspace->m_monitor != PCURRMONITOR) {
+        const auto POLDMONITOR = pWorkspace->m_monitor.lock();
+        if (!POLDMONITOR) { // wat
+            Log::logger->log(Log::ERR, "focusWorkspaceOnCurrentMonitor old monitor doesn't exist!");
+            return {.success = false, .error = "focusWorkspaceOnCurrentMonitor old monitor doesn't exist!"};
+        }
+        if (POLDMONITOR->activeWorkspaceID() == workspaceID) {
+            g_pCompositor->swapActiveWorkspaces(POLDMONITOR, PCURRMONITOR);
+            return {};
+        } else {
+            g_pCompositor->moveWorkspaceToMonitor(pWorkspace, PCURRMONITOR, true);
+        }
+    }
+
+    changeworkspace(pWorkspace->getConfigName());
+
+    return {};
+}
+
+SDispatchResult CKeybindManager::toggleSpecialWorkspace(std::string args) {
+    const auto& [workspaceID, workspaceName, isAutoID] = getWorkspaceIDNameFromString("special:" + args);
+    if (workspaceID == WORKSPACE_INVALID || !g_pCompositor->isWorkspaceSpecial(workspaceID)) {
+        Log::logger->log(Log::ERR, "Invalid workspace passed to special");
+        return {.success = false, .error = "Invalid workspace passed to special"};
+    }
+
+    bool       requestedWorkspaceIsAlreadyOpen = false;
+    const auto PMONITOR                        = Desktop::focusState()->monitor();
+    auto       specialOpenOnMonitor            = PMONITOR->activeSpecialWorkspaceID();
+
+    for (auto const& m : g_pCompositor->m_monitors) {
+        if (m->activeSpecialWorkspaceID() == workspaceID) {
+            requestedWorkspaceIsAlreadyOpen = true;
+            break;
+        }
+    }
+
+    updateRelativeCursorCoords();
+
+    PHLWORKSPACEREF focusedWorkspace;
+
+    if (requestedWorkspaceIsAlreadyOpen && specialOpenOnMonitor == workspaceID) {
+        // already open on this monitor
+        Log::logger->log(Log::DEBUG, "Toggling special workspace {} to closed", workspaceID);
+        PMONITOR->setSpecialWorkspace(nullptr);
+
+        focusedWorkspace = PMONITOR->m_activeWorkspace;
+    } else {
+        Log::logger->log(Log::DEBUG, "Toggling special workspace {} to open", workspaceID);
+        auto PSPECIALWORKSPACE = g_pCompositor->getWorkspaceByID(workspaceID);
+
+        if (!PSPECIALWORKSPACE)
+            PSPECIALWORKSPACE = g_pCompositor->createNewWorkspace(workspaceID, PMONITOR->m_id, workspaceName);
+
+        PMONITOR->setSpecialWorkspace(PSPECIALWORKSPACE);
+
+        focusedWorkspace = PSPECIALWORKSPACE;
+    }
+
+    const static auto PWARPONTOGGLESPECIAL = CConfigValue<CONFIG::INTEGER>("cursor:warp_on_toggle_special");
+
+    if (*PWARPONTOGGLESPECIAL > 0) {
+        auto PLAST     = focusedWorkspace->getLastFocusedWindow();
+        auto HLSurface = Desktop::View::CWLSurface::fromResource(g_pSeatManager->m_state.pointerFocus.lock());
+
+        if (PLAST && (!HLSurface || HLSurface->view()->type() == Desktop::View::VIEW_TYPE_WINDOW))
+            PLAST->warpCursor(*PWARPONTOGGLESPECIAL == 2);
+    }
+
+    return {};
+}
+
+SDispatchResult CKeybindManager::forceRendererReload(std::string args) {
+    bool overAgain = false;
+
+    for (auto const& m : g_pCompositor->m_monitors) {
+        if (!m->m_output)
+            continue;
+
+        auto rule = Config::monitorRuleMgr()->get(m);
+        if (!m->applyMonitorRule(std::move(rule), true)) {
+            overAgain = true;
+            break;
+        }
+    }
+
+    if (overAgain)
+        forceRendererReload(args);
+
+    return {};
+}
+
+SDispatchResult CKeybindManager::resizeActive(std::string args) {
+    const auto PLASTWINDOW = Desktop::focusState()->window();
+
+    if (!PLASTWINDOW)
+        return {.success = false, .error = "No window found"};
+
+    if (PLASTWINDOW->isFullscreen())
+        return {.success = false, .error = "Window is fullscreen"};
+
+    const auto SIZ = g_pCompositor->parseWindowVectorArgsRelative(args, PLASTWINDOW->m_realSize->goal());
+
+    if (SIZ.x < 1 || SIZ.y < 1)
+        return {.success = false, .error = "Invalid size provided"};
+
+    g_layoutManager->resizeTarget(SIZ - PLASTWINDOW->m_realSize->goal(), PLASTWINDOW->layoutTarget());
+
+    if (PLASTWINDOW->m_realSize->goal().x > 1 && PLASTWINDOW->m_realSize->goal().y > 1)
+        PLASTWINDOW->setHidden(false);
+
+    return {};
+}
+
+SDispatchResult CKeybindManager::moveActive(std::string args) {
+    const auto PLASTWINDOW = Desktop::focusState()->window();
+
+    if (!PLASTWINDOW)
+        return {.success = false, .error = "No window found"};
+
+    if (PLASTWINDOW->isFullscreen())
+        return {.success = false, .error = "Window is fullscreen"};
+
+    const auto POS = g_pCompositor->parseWindowVectorArgsRelative(args, PLASTWINDOW->m_realPosition->goal());
+
+    g_layoutManager->moveTarget(POS - PLASTWINDOW->m_realPosition->goal(), PLASTWINDOW->layoutTarget());
+
+    return {};
+}
+
+SDispatchResult CKeybindManager::moveWindow(std::string args) {
+
+    const auto WINDOWREGEX = args.substr(args.find_first_of(',') + 1);
+    const auto MOVECMD     = args.substr(0, args.find_first_of(','));
+
+    const auto PWINDOW = g_pCompositor->getWindowByRegex(WINDOWREGEX);
+
+    if (!PWINDOW) {
+        Log::logger->log(Log::ERR, "moveWindow: no window");
+        return {.success = false, .error = "moveWindow: no window"};
+    }
+
+    if (PWINDOW->isFullscreen())
+        return {.success = false, .error = "Window is fullscreen"};
+
+    const auto POS = g_pCompositor->parseWindowVectorArgsRelative(MOVECMD, PWINDOW->m_realPosition->goal());
+
+    g_layoutManager->moveTarget(POS - PWINDOW->m_realPosition->goal(), PWINDOW->layoutTarget());
+
+    return {};
+}
+
+SDispatchResult CKeybindManager::resizeWindow(std::string args) {
+
+    const auto WINDOWREGEX = args.substr(args.find_first_of(',') + 1);
+    const auto MOVECMD     = args.substr(0, args.find_first_of(','));
+
+    const auto PWINDOW = g_pCompositor->getWindowByRegex(WINDOWREGEX);
+
+    if (!PWINDOW) {
+        Log::logger->log(Log::ERR, "resizeWindow: no window");
+        return {.success = false, .error = "resizeWindow: no window"};
+    }
+
+    if (PWINDOW->isFullscreen())
+        return {.success = false, .error = "Window is fullscreen"};
+
+    const auto SIZ = g_pCompositor->parseWindowVectorArgsRelative(MOVECMD, PWINDOW->m_realSize->goal());
+
+    if (SIZ.x < 1 || SIZ.y < 1)
+        return {.success = false, .error = "Invalid size provided"};
+
+    g_layoutManager->resizeTarget(SIZ - PWINDOW->m_realSize->goal(), PWINDOW->layoutTarget(), Layout::CORNER_NONE);
+
+    if (PWINDOW->m_realSize->goal().x > 1 && PWINDOW->m_realSize->goal().y > 1)
+        PWINDOW->setHidden(false);
+
+    return {};
+}
+
+SDispatchResult CKeybindManager::circleNext(std::string arg) {
+    if (!Desktop::focusState()->window()) {
+        // if we have a clear focus, find the first window and get the next focusable.
+        const auto PWS = Desktop::focusState()->monitor()->m_activeWorkspace;
+        if (PWS && PWS->getWindows() > 0) {
+            const auto PWINDOW = PWS->getFirstWindow();
+            switchToWindow(PWINDOW);
+        }
+
+        return {};
+    }
+
+    CVarList            args{arg, 0, 's', true};
+
+    const auto          PREV = args.contains("prev") || args.contains("p") || args.contains("last") || args.contains("l");
+
+    std::optional<bool> floatStatus = {};
+    if (args.contains("tile") || args.contains("tiled")) {
+        // if we want just tiled, and we are on a tiled window, use layoutmsg for layouts that support it
+
+        if (!Desktop::focusState()->window()->m_isFloating) {
+            if (const auto SPACE = Desktop::focusState()->window()->layoutTarget()->space(); SPACE) {
+
+                constexpr const std::array<const std::type_info*, 2> LAYOUTS_WITH_CYCLE_NEXT = {
+                    &typeid(Layout::Tiled::CMonocleAlgorithm),
+                    &typeid(Layout::Tiled::CMasterAlgorithm),
+                };
+
+                if (std::ranges::contains(LAYOUTS_WITH_CYCLE_NEXT, &typeid(*SPACE->algorithm()->tiledAlgo().get()))) {
+                    CKeybindManager::layoutmsg(PREV ? "cyclenext, b" : "cyclenext");
+                    return {};
+                }
+            }
+        }
+    }
+
+    if (args.contains("float") || args.contains("floating"))
+        floatStatus = true;
+
+    const auto  VISIBLE = args.contains("visible") || args.contains("v");
+    const auto  NEXT    = args.contains("next") || args.contains("n"); // prev is default in classic alt+tab
+    const auto  HIST    = args.contains("hist") || args.contains("h");
+    const auto& w       = HIST ? g_pCompositor->getWindowCycleHist(Desktop::focusState()->window(), true, floatStatus, VISIBLE, NEXT) :
+                                 g_pCompositor->getWindowCycle(Desktop::focusState()->window(), true, floatStatus, VISIBLE, PREV);
+
+    switchToWindow(w, HIST);
+
+    return {};
+}
+
+SDispatchResult CKeybindManager::focusWindow(std::string regexp) {
+    const auto PWINDOW = g_pCompositor->getWindowByRegex(regexp);
+
+    if (!PWINDOW)
+        return {.success = false, .error = "No such window found"};
+
+    Log::logger->log(Log::DEBUG, "Focusing to window name: {}", PWINDOW->m_title);
+
+    const auto PWORKSPACE = PWINDOW->m_workspace;
+    if (!PWORKSPACE) {
+        Log::logger->log(Log::ERR, "BUG THIS: null workspace in focusWindow");
+        return {.success = false, .error = "BUG THIS: null workspace in focusWindow"};
+    }
+
+    updateRelativeCursorCoords();
+
+    if (Desktop::focusState()->monitor() && Desktop::focusState()->monitor()->m_activeWorkspace != PWINDOW->m_workspace &&
+        Desktop::focusState()->monitor()->m_activeSpecialWorkspace != PWINDOW->m_workspace) {
+        Log::logger->log(Log::DEBUG, "Fake executing workspace to move focus");
+        changeworkspace(PWORKSPACE->getConfigName());
+    }
+
+    Desktop::focusState()->fullWindowFocus(PWINDOW, Desktop::FOCUS_REASON_KEYBIND, nullptr, false);
+
+    PWINDOW->warpCursor();
+
+    return {};
+}
+
+SDispatchResult CKeybindManager::tagWindow(std::string args) {
+    PHLWINDOW PWINDOW = nullptr;
+    CVarList  vars{args, 0, 's', true};
+
+    if (vars.size() == 1)
+        PWINDOW = Desktop::focusState()->window();
+    else if (vars.size() == 2)
+        PWINDOW = g_pCompositor->getWindowByRegex(vars[1]);
+    else
+        return {.success = false, .error = "Invalid number of arguments, expected 1 or 2 arguments"};
+
+    if (PWINDOW && PWINDOW->m_ruleApplicator->m_tagKeeper.applyTag(vars[0])) {
+        PWINDOW->m_ruleApplicator->propertiesChanged(Desktop::Rule::RULE_PROP_TAG);
+        PWINDOW->updateDecorationValues();
+    }
+
+    return {};
+}
+
+SDispatchResult CKeybindManager::toggleSwallow(std::string args) {
+    PHLWINDOWREF pWindow = Desktop::focusState()->window();
+
+    if (!valid(pWindow) || !valid(pWindow->m_swallowed))
+        return {};
+
+    if (pWindow->m_swallowed->m_currentlySwallowed) {
+        // Unswallow
+        pWindow->m_swallowed->m_currentlySwallowed = false;
+        pWindow->m_swallowed->setHidden(false);
+        g_layoutManager->newTarget(pWindow->m_swallowed->layoutTarget(), pWindow->m_workspace->m_space);
+    } else {
+        // Reswallow
+        pWindow->m_swallowed->m_currentlySwallowed = true;
+        pWindow->m_swallowed->setHidden(true);
+        g_layoutManager->removeTarget(pWindow->m_swallowed->layoutTarget());
+    }
+
+    return {};
+}
+
+SDispatchResult CKeybindManager::setSubmap(std::string submap) {
+    if (submap == "reset" || submap.empty()) {
+        m_currentSelectedSubmap.name = "";
+        Log::logger->log(Log::DEBUG, "Reset active submap to the default one.");
+        g_pEventManager->postEvent(SHyprIPCEvent{"submap", ""});
+        Event::bus()->m_events.keybinds.submap.emit(m_currentSelectedSubmap.name);
+        return {};
+    }
+
+    for (const auto& k : g_pKeybindManager->m_keybinds) {
+        if (k->submap.name == submap) {
+            m_currentSelectedSubmap.name = submap;
+            Log::logger->log(Log::DEBUG, "Changed keybind submap to {}", submap);
+            g_pEventManager->postEvent(SHyprIPCEvent{"submap", submap});
+            Event::bus()->m_events.keybinds.submap.emit(m_currentSelectedSubmap.name);
+            return {};
+        }
+    }
+
+    Log::logger->log(Log::ERR, "Cannot set submap {}, submap doesn't exist (wasn't registered!)", submap);
+    return {.success = false, .error = std::format("Cannot set submap {}, submap doesn't exist (wasn't registered!)", submap)};
+}
+
+SDispatchResult CKeybindManager::pass(std::string regexp) {
+
+    // find the first window passing the regex
+    const auto PWINDOW = g_pCompositor->getWindowByRegex(regexp);
+
+    if (!PWINDOW) {
+        Log::logger->log(Log::ERR, "pass: window not found");
+        return {.success = false, .error = "pass: window not found"};
+    }
+
+    if (!g_pSeatManager->m_keyboard) {
+        Log::logger->log(Log::ERR, "No kb in pass?");
+        return {.success = false, .error = "No kb in pass?"};
+    }
+
+    const auto XWTOXW        = PWINDOW->m_isX11 && Desktop::focusState()->window() && Desktop::focusState()->window()->m_isX11;
+    const auto LASTMOUSESURF = g_pSeatManager->m_state.pointerFocus.lock();
+    const auto LASTKBSURF    = g_pSeatManager->m_state.keyboardFocus.lock();
+
+    // pass all mf shit
+    if (!XWTOXW) {
+        if (g_pKeybindManager->m_lastCode != 0)
+            g_pSeatManager->setKeyboardFocus(PWINDOW->wlSurface()->resource());
+        else
+            g_pSeatManager->setPointerFocus(PWINDOW->wlSurface()->resource(), {1, 1});
+    }
+
+    g_pSeatManager->sendKeyboardMods(g_pInputManager->getModsFromAllKBs(), 0, 0, 0);
+
+    if (g_pKeybindManager->m_passPressed == 1) {
+        if (g_pKeybindManager->m_lastCode != 0)
+            g_pSeatManager->sendKeyboardKey(g_pKeybindManager->m_timeLastMs, g_pKeybindManager->m_lastCode - 8, WL_KEYBOARD_KEY_STATE_PRESSED);
+        else
+            g_pSeatManager->sendPointerButton(g_pKeybindManager->m_timeLastMs, g_pKeybindManager->m_lastMouseCode, WL_POINTER_BUTTON_STATE_PRESSED);
+    } else if (g_pKeybindManager->m_passPressed == 0)
+        if (g_pKeybindManager->m_lastCode != 0)
+            g_pSeatManager->sendKeyboardKey(g_pKeybindManager->m_timeLastMs, g_pKeybindManager->m_lastCode - 8, WL_KEYBOARD_KEY_STATE_RELEASED);
+        else
+            g_pSeatManager->sendPointerButton(g_pKeybindManager->m_timeLastMs, g_pKeybindManager->m_lastMouseCode, WL_POINTER_BUTTON_STATE_RELEASED);
+    else {
+        // dynamic call of the dispatcher
+        if (g_pKeybindManager->m_lastCode != 0) {
+            g_pSeatManager->sendKeyboardKey(g_pKeybindManager->m_timeLastMs, g_pKeybindManager->m_lastCode - 8, WL_KEYBOARD_KEY_STATE_PRESSED);
+            g_pSeatManager->sendKeyboardKey(g_pKeybindManager->m_timeLastMs, g_pKeybindManager->m_lastCode - 8, WL_KEYBOARD_KEY_STATE_RELEASED);
+        } else {
+            g_pSeatManager->sendPointerButton(g_pKeybindManager->m_timeLastMs, g_pKeybindManager->m_lastMouseCode, WL_POINTER_BUTTON_STATE_PRESSED);
+            g_pSeatManager->sendPointerButton(g_pKeybindManager->m_timeLastMs, g_pKeybindManager->m_lastMouseCode, WL_POINTER_BUTTON_STATE_RELEASED);
+        }
+    }
+
+    if (XWTOXW)
+        return {};
+
+    // Massive hack:
+    // this will make g_pSeatManager NOT send the leave event to XWayland apps, provided we are not on an XWayland window already.
+    // please kill me
+    if (PWINDOW->m_isX11) {
+        if (g_pKeybindManager->m_lastCode != 0) {
+            g_pSeatManager->m_state.keyboardFocus.reset();
+            g_pSeatManager->m_state.keyboardFocusResource.reset();
+        } else {
+            g_pSeatManager->m_state.pointerFocus.reset();
+            g_pSeatManager->m_state.pointerFocusResource.reset();
+        }
+    }
+
+    const auto SL = PWINDOW->m_realPosition->goal() - g_pInputManager->getMouseCoordsInternal();
+
+    if (g_pKeybindManager->m_lastCode != 0)
+        g_pSeatManager->setKeyboardFocus(LASTKBSURF);
+    else
+        g_pSeatManager->setPointerFocus(LASTMOUSESURF, SL);
+
+    return {};
+}
+
+SDispatchResult CKeybindManager::sendshortcut(std::string args) {
+    // args=<NEW_MODKEYS><NEW_KEY>[,WINDOW_RULES]
+    const auto ARGS = CVarList(args, 3);
+    if (ARGS.size() != 3) {
+        Log::logger->log(Log::ERR, "sendshortcut: invalid args");
+        return {.success = false, .error = "sendshortcut: invalid args"};
+    }
+
+    const auto MOD     = g_pKeybindManager->stringToModMask(ARGS[0]);
+    const auto KEY     = ARGS[1];
+    uint32_t   keycode = 0;
+    bool       isMouse = false;
+
+    // similar to parseKey in ConfigManager
+    if (isNumber(KEY) && std::stoi(KEY) > 9)
+        keycode = std::stoi(KEY);
+    else if (KEY.compare(0, 5, "code:") == 0 && isNumber(KEY.substr(5)))
+        keycode = std::stoi(KEY.substr(5));
+    else if (KEY.compare(0, 6, "mouse:") == 0 && isNumber(KEY.substr(6))) {
+        keycode = std::stoi(KEY.substr(6));
+        isMouse = true;
+        if (keycode < 272) {
+            Log::logger->log(Log::ERR, "sendshortcut: invalid mouse button");
+            return {.success = false, .error = "sendshortcut: invalid mouse button"};
+        }
+    } else {
+
+        // here, we need to find the keycode from the key name
+        // this is not possible through xkb's lib, so we need to iterate through all keycodes
+        // once found, we save it to the cache
+
+        const auto KEYSYM = xkb_keysym_from_name(KEY.c_str(), XKB_KEYSYM_CASE_INSENSITIVE);
+        keycode           = 0;
+
+        const auto KB = g_pSeatManager->m_keyboard;
+
+        if (!KB) {
+            Log::logger->log(Log::ERR, "sendshortcut: no kb");
+            return {.success = false, .error = "sendshortcut: no kb"};
+        }
+
+        const auto KEYPAIRSTRING = std::format("{}{}", rc<uintptr_t>(KB.get()), KEY);
+
+        if (!g_pKeybindManager->m_keyToCodeCache.contains(KEYPAIRSTRING)) {
+            xkb_keymap*   km = KB->m_xkbKeymap;
+            xkb_state*    ks = KB->m_xkbState;
+
+            xkb_keycode_t keycode_min, keycode_max;
+            keycode_min = xkb_keymap_min_keycode(km);
+            keycode_max = xkb_keymap_max_keycode(km);
+
+            for (xkb_keycode_t kc = keycode_min; kc <= keycode_max; ++kc) {
+                xkb_keysym_t sym = xkb_state_key_get_one_sym(ks, kc);
+
+                if (sym == KEYSYM) {
+                    keycode                                            = kc;
+                    g_pKeybindManager->m_keyToCodeCache[KEYPAIRSTRING] = keycode;
+                }
+            }
+
+            if (!keycode) {
+                Log::logger->log(Log::ERR, "sendshortcut: key not found");
+                return {.success = false, .error = "sendshortcut: key not found"};
+            }
+
+        } else
+            keycode = g_pKeybindManager->m_keyToCodeCache[KEYPAIRSTRING];
+    }
+
+    if (!keycode) {
+        Log::logger->log(Log::ERR, "sendshortcut: invalid key");
+        return {.success = false, .error = "sendshortcut: invalid key"};
+    }
+
+    const std::string regexp      = ARGS[2];
+    PHLWINDOW         PWINDOW     = nullptr;
+    const auto        LASTSURFACE = Desktop::focusState()->surface();
+
+    //if regexp is not empty, send shortcut to current window
+    //else, don't change focus
+    if (!regexp.empty()) {
+        PWINDOW = g_pCompositor->getWindowByRegex(regexp);
+
+        if (!PWINDOW) {
+            Log::logger->log(Log::ERR, "sendshortcut: window not found");
+            return {.success = false, .error = "sendshortcut: window not found"};
+        }
+
+        if (!g_pSeatManager->m_keyboard) {
+            Log::logger->log(Log::ERR, "No kb in sendshortcut?");
+            return {.success = false, .error = "No kb in sendshortcut?"};
+        }
+
+        if (!isMouse)
+            g_pSeatManager->setKeyboardFocus(PWINDOW->wlSurface()->resource());
+        else
+            g_pSeatManager->setPointerFocus(PWINDOW->wlSurface()->resource(), {1, 1});
+    }
+
+    //copied the rest from pass and modified it
+    // if wl -> xwl, activate destination
+    if (PWINDOW && PWINDOW->m_isX11 && Desktop::focusState()->window() && !Desktop::focusState()->window()->m_isX11)
+        g_pXWaylandManager->activateSurface(PWINDOW->wlSurface()->resource(), true);
+    // if xwl -> xwl, send to current. Timing issues make this not work.
+    if (PWINDOW && PWINDOW->m_isX11 && Desktop::focusState()->window() && Desktop::focusState()->window()->m_isX11)
+        PWINDOW = nullptr;
+
+    g_pSeatManager->sendKeyboardMods(MOD, 0, 0, 0);
+
+    if (g_pKeybindManager->m_passPressed == 1) {
+        if (!isMouse)
+            g_pSeatManager->sendKeyboardKey(g_pKeybindManager->m_timeLastMs, keycode - 8, WL_KEYBOARD_KEY_STATE_PRESSED);
+        else
+            g_pSeatManager->sendPointerButton(g_pKeybindManager->m_timeLastMs, keycode, WL_POINTER_BUTTON_STATE_PRESSED);
+    } else if (g_pKeybindManager->m_passPressed == 0) {
+        if (!isMouse)
+            g_pSeatManager->sendKeyboardKey(g_pKeybindManager->m_timeLastMs, keycode - 8, WL_KEYBOARD_KEY_STATE_RELEASED);
+        else
+            g_pSeatManager->sendPointerButton(g_pKeybindManager->m_timeLastMs, keycode, WL_POINTER_BUTTON_STATE_RELEASED);
+    } else {
+        // dynamic call of the dispatcher
+        if (!isMouse) {
+            g_pSeatManager->sendKeyboardKey(g_pKeybindManager->m_timeLastMs, keycode - 8, WL_KEYBOARD_KEY_STATE_PRESSED);
+            g_pSeatManager->sendKeyboardKey(g_pKeybindManager->m_timeLastMs, keycode - 8, WL_KEYBOARD_KEY_STATE_RELEASED);
+        } else {
+            g_pSeatManager->sendPointerButton(g_pKeybindManager->m_timeLastMs, keycode, WL_POINTER_BUTTON_STATE_PRESSED);
+            g_pSeatManager->sendPointerButton(g_pKeybindManager->m_timeLastMs, keycode, WL_POINTER_BUTTON_STATE_RELEASED);
+        }
+    }
+
+    g_pSeatManager->sendKeyboardMods(0, 0, 0, 0);
+
+    if (!PWINDOW)
+        return {};
+
+    if (PWINDOW->m_isX11) { //xwayland hack, see pass
+        if (!isMouse) {
+            g_pSeatManager->m_state.keyboardFocus.reset();
+            g_pSeatManager->m_state.keyboardFocusResource.reset();
+        } else {
+            g_pSeatManager->m_state.pointerFocus.reset();
+            g_pSeatManager->m_state.pointerFocusResource.reset();
+        }
+    }
+
+    const auto SL = PWINDOW->m_realPosition->goal() - g_pInputManager->getMouseCoordsInternal();
+
+    if (!isMouse)
+        g_pSeatManager->setKeyboardFocus(LASTSURFACE);
+    else
+        g_pSeatManager->setPointerFocus(LASTSURFACE, SL);
+
+    return {};
+}
+
+SDispatchResult CKeybindManager::layoutmsg(std::string msg) {
+    auto ret = g_layoutManager->layoutMsg(msg);
+    if (!ret)
+        return {.success = false, .error = ret.error()};
+    return {};
+}
+
+SDispatchResult CKeybindManager::dpms(std::string arg) {
+    SDispatchResult res;
+    bool            enable = arg.starts_with("on");
+    std::string     port   = "";
+
+    bool            isToggle = arg.starts_with("toggle");
+    if (arg.find_first_of(' ') != std::string::npos)
+        port = arg.substr(arg.find_first_of(' ') + 1);
+
+    for (auto const& m : g_pCompositor->m_realMonitors) {
+        if (!m->m_enabled)
+            continue;
+
+        if (!port.empty() && m->m_name != port)
+            continue;
+
+        if (isToggle)
+            enable = !m->m_dpmsStatus;
+
+        m->setDPMS(enable);
+    }
+
+    g_pCompositor->m_dpmsStateOn = enable;
+
+    g_pPointerManager->recheckEnteredOutputs();
+
+    return res;
+}
+
+SDispatchResult CKeybindManager::swapnext(std::string arg) {
+
+    PHLWINDOW toSwap = nullptr;
+
+    if (!Desktop::focusState()->window())
+        return {};
+
+    const auto PLASTWINDOW = Desktop::focusState()->window();
+
+    const auto PLASTCYCLED =
+        validMapped(Desktop::focusState()->window()->m_lastCycledWindow) && Desktop::focusState()->window()->m_lastCycledWindow->m_workspace == PLASTWINDOW->m_workspace ?
+        Desktop::focusState()->window()->m_lastCycledWindow.lock() :
+        nullptr;
+
+    const bool NEED_PREV = arg == "last" || arg == "l" || arg == "prev" || arg == "p";
+    toSwap               = g_pCompositor->getWindowCycle(PLASTCYCLED ? PLASTCYCLED : PLASTWINDOW, true, std::nullopt, false, NEED_PREV);
+
+    // sometimes we may come back to ourselves.
+    if (toSwap == PLASTWINDOW)
+        toSwap = g_pCompositor->getWindowCycle(PLASTWINDOW, true, std::nullopt, false, NEED_PREV);
+
+    g_layoutManager->switchTargets(PLASTWINDOW->layoutTarget(), toSwap->layoutTarget(), false);
+
+    PLASTWINDOW->m_lastCycledWindow = toSwap;
+
+    Desktop::focusState()->fullWindowFocus(PLASTWINDOW, Desktop::FOCUS_REASON_KEYBIND);
+
+    return {};
+}
+
+SDispatchResult CKeybindManager::swapActiveWorkspaces(std::string args) {
+    const auto MON1 = args.substr(0, args.find_first_of(' '));
+    const auto MON2 = args.substr(args.find_first_of(' ') + 1);
+
+    const auto PMON1 = g_pCompositor->getMonitorFromString(MON1);
+    const auto PMON2 = g_pCompositor->getMonitorFromString(MON2);
+
+    if (!PMON1 || !PMON2)
+        return {.success = false, .error = "No such monitor found"};
+
+    if (PMON1 == PMON2)
+        return {};
+
+    g_pCompositor->swapActiveWorkspaces(PMON1, PMON2);
+
+    return {};
+}
+
+SDispatchResult CKeybindManager::pinActive(std::string args) {
+
+    PHLWINDOW PWINDOW = nullptr;
+
+    if (args != "active" && args.length() > 1)
+        PWINDOW = g_pCompositor->getWindowByRegex(args);
+    else
+        PWINDOW = Desktop::focusState()->window();
+
+    if (!PWINDOW) {
+        Log::logger->log(Log::ERR, "pin: window not found");
+        return {.success = false, .error = "pin: window not found"};
+    }
+
+    if (!PWINDOW->m_isFloating || PWINDOW->isFullscreen())
+        return {.success = false, .error = "Window does not qualify to be pinned"};
+
+    PWINDOW->m_pinned = !PWINDOW->m_pinned;
+
+    const auto PMONITOR = PWINDOW->m_monitor.lock();
+
+    if (!PMONITOR) {
+        Log::logger->log(Log::ERR, "pin: monitor not found");
+        return {.success = false, .error = "pin: window not found"};
+    }
+
+    PWINDOW->layoutTarget()->assignToSpace(PMONITOR->m_activeWorkspace->m_space);
+
+    PWINDOW->m_ruleApplicator->propertiesChanged(Desktop::Rule::RULE_PROP_PINNED);
+
+    const auto PWORKSPACE = PWINDOW->m_workspace;
+
+    PWORKSPACE->m_lastFocusedWindow =
+        g_pCompositor->vectorToWindowUnified(g_pInputManager->getMouseCoordsInternal(), Desktop::View::RESERVED_EXTENTS | Desktop::View::INPUT_EXTENTS);
+
+    g_pEventManager->postEvent(SHyprIPCEvent{"pin", std::format("{:x},{}", rc<uintptr_t>(PWINDOW.get()), sc<int>(PWINDOW->m_pinned))});
+    Event::bus()->m_events.window.pin.emit(PWINDOW);
+
+    g_pHyprRenderer->damageWindow(PWINDOW, true);
+
+    return {};
+}
+
+SDispatchResult CKeybindManager::mouse(std::string args) {
+    const auto ARGS    = CVarList(args.substr(1), 2, ' ');
+    const auto PRESSED = args[0] == '1';
+
+    if (!PRESSED) {
+        return changeMouseBindMode(MBIND_INVALID);
+    }
+
+    if (ARGS[0] == "movewindow") {
+        return changeMouseBindMode(MBIND_MOVE);
+    } else {
+        try {
+            switch (std::stoi(ARGS[1])) {
+                case 1: return changeMouseBindMode(MBIND_RESIZE_FORCE_RATIO); break;
+                case 2: return changeMouseBindMode(MBIND_RESIZE_BLOCK_RATIO); break;
+                default: return changeMouseBindMode(MBIND_RESIZE);
+            }
+        } catch (std::exception& e) { return changeMouseBindMode(MBIND_RESIZE); }
+    }
+}
+
 SDispatchResult CKeybindManager::changeMouseBindMode(const eMouseBindMode MODE) {
     if (MODE != MBIND_INVALID) {
         if (g_layoutManager->dragController()->target())
