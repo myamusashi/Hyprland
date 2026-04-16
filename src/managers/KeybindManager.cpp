@@ -2343,3 +2343,600 @@ SDispatchResult CKeybindManager::changeMouseBindMode(const eMouseBindMode MODE) 
 
     return {};
 }
+SDispatchResult CKeybindManager::bringActiveToTop(std::string args) {
+    if (Desktop::focusState()->window() && Desktop::focusState()->window()->m_isFloating)
+        g_pCompositor->changeWindowZOrder(Desktop::focusState()->window(), true);
+
+    g_pInputManager->simulateMouseMovement();
+
+    return {};
+}
+
+SDispatchResult CKeybindManager::alterZOrder(std::string args) {
+    const auto WINDOWREGEX = args.substr(args.find_first_of(',') + 1);
+    const auto POSITION    = args.substr(0, args.find_first_of(','));
+    auto       PWINDOW     = g_pCompositor->getWindowByRegex(WINDOWREGEX);
+
+    if (!PWINDOW && Desktop::focusState()->window() && Desktop::focusState()->window()->m_isFloating)
+        PWINDOW = Desktop::focusState()->window();
+
+    if (!PWINDOW) {
+        Log::logger->log(Log::ERR, "alterZOrder: no window");
+        return {.success = false, .error = "alterZOrder: no window"};
+    }
+
+    if (POSITION == "top")
+        g_pCompositor->changeWindowZOrder(PWINDOW, true);
+    else if (POSITION == "bottom")
+        g_pCompositor->changeWindowZOrder(PWINDOW, false);
+    else {
+        Log::logger->log(Log::ERR, "alterZOrder: bad position: {}", POSITION);
+        return {.success = false, .error = "alterZOrder: bad position: {}"};
+    }
+
+    g_pInputManager->simulateMouseMovement();
+
+    return {};
+}
+
+SDispatchResult CKeybindManager::lockGroups(std::string args) {
+    if (args == "lock" || args.empty() || args == "lockgroups")
+        g_pKeybindManager->m_groupsLocked = true;
+    else if (args == "toggle")
+        g_pKeybindManager->m_groupsLocked = !g_pKeybindManager->m_groupsLocked;
+    else
+        g_pKeybindManager->m_groupsLocked = false;
+
+    g_pEventManager->postEvent(SHyprIPCEvent{"lockgroups", g_pKeybindManager->m_groupsLocked ? "1" : "0"});
+    g_pCompositor->updateAllWindowsAnimatedDecorationValues();
+
+    return {};
+}
+
+SDispatchResult CKeybindManager::lockActiveGroup(std::string args) {
+    const auto PWINDOW = Desktop::focusState()->window();
+
+    if (!PWINDOW)
+        return {.success = false, .error = "No window found"};
+
+    if (!PWINDOW->m_group)
+        return {.success = false, .error = "Not a group"};
+
+    if (args == "lock")
+        PWINDOW->m_group->setLocked(true);
+    else if (args == "toggle")
+        PWINDOW->m_group->setLocked(!PWINDOW->m_group->locked());
+    else
+        PWINDOW->m_group->setLocked(false);
+
+    PWINDOW->updateDecorationValues();
+
+    return {};
+}
+
+void CKeybindManager::moveWindowIntoGroup(PHLWINDOW pWindow, PHLWINDOW pWindowInDirection) {
+    if (!pWindowInDirection->m_group || pWindowInDirection->m_group->denied())
+        return;
+
+    updateRelativeCursorCoords();
+
+    if (pWindow->m_monitor != pWindowInDirection->m_monitor) {
+        pWindow->moveToWorkspace(pWindowInDirection->m_workspace);
+        pWindow->m_monitor = pWindowInDirection->m_monitor;
+    }
+
+    if (pWindow->m_group)
+        pWindow->m_group->remove(pWindow);
+    pWindowInDirection->m_group->add(pWindow);
+
+    pWindowInDirection->m_group->setCurrent(pWindow);
+    pWindow->updateWindowDecos();
+    Desktop::focusState()->fullWindowFocus(pWindow, Desktop::FOCUS_REASON_KEYBIND);
+    pWindow->warpCursor();
+
+    g_pEventManager->postEvent(SHyprIPCEvent{"moveintogroup", std::format("{:x}", rc<uintptr_t>(pWindow.get()))});
+}
+
+void CKeybindManager::moveWindowOutOfGroup(PHLWINDOW pWindow, const std::string& dir) {
+    static auto BFOCUSREMOVEDWINDOW = CConfigValue<Hyprlang::INT>("group:focus_removed_window");
+
+    if (!pWindow->m_group)
+        return;
+
+    WP<Desktop::View::CGroup> group = pWindow->m_group;
+
+    const auto                direction = !dir.empty() ? Math::fromChar(dir[0]) : Math::DIRECTION_DEFAULT;
+
+    pWindow->m_group->remove(pWindow, direction);
+
+    if (*BFOCUSREMOVEDWINDOW || !group) {
+        Desktop::focusState()->fullWindowFocus(pWindow, Desktop::FOCUS_REASON_KEYBIND);
+        pWindow->warpCursor();
+    } else {
+        Desktop::focusState()->fullWindowFocus(group->current(), Desktop::FOCUS_REASON_KEYBIND);
+        group->current()->warpCursor();
+    }
+
+    g_pEventManager->postEvent(SHyprIPCEvent{"moveoutofgroup", std::format("{:x}", rc<uintptr_t>(pWindow.get()))});
+}
+
+SDispatchResult CKeybindManager::moveIntoGroup(std::string args) {
+    static auto PIGNOREGROUPLOCK = CConfigValue<Hyprlang::INT>("binds:ignore_group_lock");
+
+    if (!*PIGNOREGROUPLOCK && g_pKeybindManager->m_groupsLocked)
+        return {};
+
+    Math::eDirection dir = Math::fromChar(args[0]);
+    if (dir == Math::DIRECTION_DEFAULT) {
+        Log::logger->log(Log::ERR, "Cannot move into group in direction {}, unsupported direction. Supported: l,r,u/t,d/b", args[0]);
+        return {.success = false, .error = std::format("Cannot move into group in direction {}, unsupported direction. Supported: l,r,u/t,d/b", args[0])};
+    }
+
+    const auto PWINDOW = Desktop::focusState()->window();
+
+    if (!PWINDOW)
+        return {};
+
+    auto PWINDOWINDIR = g_pCompositor->getWindowInDirection(PWINDOW, dir);
+
+    if (!PWINDOWINDIR || !PWINDOWINDIR->m_group)
+        return {};
+
+    const auto GROUP = PWINDOWINDIR->m_group;
+
+    // Do not move window into locked group if binds:ignore_group_lock is false
+    if (!*PIGNOREGROUPLOCK && (GROUP->locked() || (PWINDOW->m_group && PWINDOW->m_group->locked())))
+        return {};
+
+    moveWindowIntoGroup(PWINDOW, PWINDOWINDIR);
+
+    return {};
+}
+
+SDispatchResult CKeybindManager::moveIntoOrCreateGroup(std::string args) {
+    static auto PIGNOREGROUPLOCK = CConfigValue<Hyprlang::INT>("binds:ignore_group_lock");
+
+    if (!*PIGNOREGROUPLOCK && g_pKeybindManager->m_groupsLocked)
+        return {};
+
+    Math::eDirection dir = Math::fromChar(args[0]);
+    if (dir == Math::DIRECTION_DEFAULT) {
+        Log::logger->log(Log::ERR, "Cannot move into or create group in direction {}, unsupported direction. Supported: l,r,u/t,d/b", args[0]);
+        return {.success = false, .error = std::format("Cannot move into or create group in direction {}, unsupported direction. Supported: l,r,u/t,d/b", args[0])};
+    }
+
+    const auto PWINDOW = Desktop::focusState()->window();
+
+    if (!PWINDOW)
+        return {};
+
+    auto PWINDOWINDIR = g_pCompositor->getWindowInDirection(PWINDOW, dir);
+
+    if (!PWINDOWINDIR)
+        return {};
+
+    if (!PWINDOWINDIR->m_group) {
+        if (PWINDOWINDIR->isFullscreen())
+            return {};
+
+        PWINDOWINDIR->m_group = Desktop::View::CGroup::create({PWINDOWINDIR});
+    }
+
+    const auto GROUP = PWINDOWINDIR->m_group;
+
+    if (!*PIGNOREGROUPLOCK && (GROUP->locked() || (PWINDOW->m_group && PWINDOW->m_group->locked())))
+        return {};
+
+    moveWindowIntoGroup(PWINDOW, PWINDOWINDIR);
+
+    return {};
+}
+
+SDispatchResult CKeybindManager::moveOutOfGroup(std::string args) {
+    static auto PIGNOREGROUPLOCK = CConfigValue<Hyprlang::INT>("binds:ignore_group_lock");
+
+    if (!*PIGNOREGROUPLOCK && g_pKeybindManager->m_groupsLocked)
+        return {.success = false, .error = "Groups locked"};
+
+    PHLWINDOW PWINDOW = nullptr;
+
+    if (args != "active" && args.length() > 1)
+        PWINDOW = g_pCompositor->getWindowByRegex(args);
+    else
+        PWINDOW = Desktop::focusState()->window();
+
+    if (!PWINDOW)
+        return {.success = false, .error = "No window found"};
+
+    if (!PWINDOW->m_group)
+        return {.success = false, .error = "Window not in a group"};
+
+    moveWindowOutOfGroup(PWINDOW);
+
+    return {};
+}
+
+SDispatchResult CKeybindManager::moveWindowOrGroup(std::string args) {
+    static auto      PIGNOREGROUPLOCK = CConfigValue<Hyprlang::INT>("binds:ignore_group_lock");
+
+    Math::eDirection dir = Math::fromChar(args[0]);
+    if (dir == Math::DIRECTION_DEFAULT) {
+        Log::logger->log(Log::ERR, "Cannot move into group in direction {}, unsupported direction. Supported: l,r,u/t,d/b", args[0]);
+        return {.success = false, .error = std::format("Cannot move into group in direction {}, unsupported direction. Supported: l,r,u/t,d/b", args[0])};
+    }
+
+    const auto PWINDOW = Desktop::focusState()->window();
+    if (!PWINDOW)
+        return {.success = false, .error = "No window found"};
+
+    if (PWINDOW->isFullscreen())
+        return {};
+
+    if (!*PIGNOREGROUPLOCK && g_pKeybindManager->m_groupsLocked) {
+        g_layoutManager->moveInDirection(PWINDOW->layoutTarget(), args);
+        return {};
+    }
+
+    const auto PWINDOWINDIR = g_pCompositor->getWindowInDirection(PWINDOW, dir);
+
+    const bool ISWINDOWGROUP       = PWINDOW->m_group;
+    const bool ISWINDOWGROUPLOCKED = ISWINDOWGROUP && PWINDOW->m_group->locked();
+    const bool ISWINDOWGROUPSINGLE = ISWINDOWGROUP && PWINDOW->m_group->size() == 1;
+    const bool ISWINDOWGROUPDENIED = ISWINDOWGROUP && PWINDOW->m_group->denied();
+
+    updateRelativeCursorCoords();
+
+    // note: PWINDOWINDIR is not null implies !PWINDOW->m_isFloating
+    if (PWINDOWINDIR && PWINDOWINDIR->m_group) { // target is group
+        if (!*PIGNOREGROUPLOCK && (PWINDOWINDIR->m_group->locked() || ISWINDOWGROUPLOCKED || ISWINDOWGROUPDENIED)) {
+            g_layoutManager->moveInDirection(PWINDOW->layoutTarget(), args);
+            PWINDOW->warpCursor();
+        } else
+            moveWindowIntoGroup(PWINDOW, PWINDOWINDIR);
+    } else if (PWINDOWINDIR) { // target is regular window
+        if ((!*PIGNOREGROUPLOCK && ISWINDOWGROUPLOCKED) || !ISWINDOWGROUP || (ISWINDOWGROUPSINGLE && PWINDOW->m_groupRules & Desktop::View::GROUP_SET_ALWAYS)) {
+            g_layoutManager->moveInDirection(PWINDOW->layoutTarget(), args);
+            PWINDOW->warpCursor();
+        } else
+            moveWindowOutOfGroup(PWINDOW, args);
+    } else if ((*PIGNOREGROUPLOCK || !ISWINDOWGROUPLOCKED) && ISWINDOWGROUP) { // no target window
+        moveWindowOutOfGroup(PWINDOW, args);
+    } else if (!PWINDOWINDIR && !ISWINDOWGROUP) { // no target in dir and not in group
+        g_layoutManager->moveInDirection(PWINDOW->layoutTarget(), args);
+        PWINDOW->warpCursor();
+    }
+
+    PWINDOW->updateDecorationValues();
+
+    return {};
+}
+
+SDispatchResult CKeybindManager::setIgnoreGroupLock(std::string args) {
+    // FIXME: this is no longer possible like this. It's redundant anyways. Can be easily scripted / lua'd
+    // static auto      PIGNOREGROUPLOCK = CConfigValue<Hyprlang::INT>("binds:ignore_group_lock");
+
+    // if (args == "toggle")
+    //     *PIGNOREGROUPLOCK = !*PIGNOREGROUPLOCK;
+    // else
+    //     *PIGNOREGROUPLOCK = args == "on";
+
+    // g_pEventManager->postEvent(SHyprIPCEvent{"ignoregrouplock", std::to_string(**PIGNOREGROUPLOCK)});
+
+    return {};
+}
+
+SDispatchResult CKeybindManager::denyWindowFromGroup(std::string args) {
+    const auto PWINDOW = Desktop::focusState()->window();
+    if (!PWINDOW || (PWINDOW && PWINDOW->m_group))
+        return {};
+
+    if (args == "toggle")
+        PWINDOW->m_group->setDenied(!PWINDOW->m_group->denied());
+    else
+        PWINDOW->m_group->setDenied(args == "on");
+
+    PWINDOW->updateDecorationValues();
+
+    return {};
+}
+
+SDispatchResult CKeybindManager::global(std::string args) {
+    const auto APPID = args.substr(0, args.find_first_of(':'));
+    const auto NAME  = args.substr(args.find_first_of(':') + 1);
+
+    if (NAME.empty())
+        return {};
+
+    if (!PROTO::globalShortcuts->isTaken(APPID, NAME))
+        return {};
+
+    PROTO::globalShortcuts->sendGlobalShortcutEvent(APPID, NAME, g_pKeybindManager->m_passPressed);
+
+    return {};
+}
+
+SDispatchResult CKeybindManager::moveGroupWindow(std::string args) {
+    const auto BACK = args == "b" || args == "prev";
+
+    const auto PLASTWINDOW = Desktop::focusState()->window();
+
+    if (!PLASTWINDOW)
+        return {.success = false, .error = "No window found"};
+
+    if (!PLASTWINDOW->m_group)
+        return {.success = false, .error = "Window not in a group"};
+
+    const auto GROUP = PLASTWINDOW->m_group;
+
+    if (BACK)
+        GROUP->swapWithLast();
+    else
+        GROUP->swapWithNext();
+
+    return {};
+}
+
+SDispatchResult CKeybindManager::event(std::string args) {
+    g_pEventManager->postEvent(SHyprIPCEvent{"custom", args});
+    return {};
+}
+
+#include <utility>
+#include <type_traits>
+
+template <typename T>
+static void parsePropTrivial(Desktop::Types::COverridableVar<T>& prop, const std::string& s) {
+    static_assert(std::is_same_v<T, bool> || std::is_same_v<T, Hyprlang::INT> || std::is_same_v<T, int> || std::is_same_v<T, Hyprlang::FLOAT> || std::is_same_v<T, std::string>,
+                  "Invalid type passed to parsePropTrivial");
+
+    if (s == "unset") {
+        prop.unset(Desktop::Types::PRIORITY_SET_PROP);
+        return;
+    }
+
+    try {
+        if constexpr (std::is_same_v<T, bool>) {
+            if (s == "toggle")
+                prop.increment(true, Desktop::Types::PRIORITY_SET_PROP);
+            else
+                prop = Desktop::Types::COverridableVar<T>(truthy(s), Desktop::Types::PRIORITY_SET_PROP);
+        } else if constexpr (std::is_same_v<T, Hyprlang::INT> || std::is_same_v<T, int>) {
+            if (s.starts_with("relative")) {
+                const auto VAL = std::stoi(s.substr(s.find(' ') + 1));
+                prop.increment(VAL, Desktop::Types::PRIORITY_SET_PROP);
+            } else
+                prop = Desktop::Types::COverridableVar<T>(std::stoull(s), Desktop::Types::PRIORITY_SET_PROP);
+        } else if constexpr (std::is_same_v<T, Hyprlang::FLOAT>) {
+            if (s.starts_with("relative")) {
+                const auto VAL = std::stof(s.substr(s.find(' ') + 1));
+                prop.increment(VAL, Desktop::Types::PRIORITY_SET_PROP);
+            } else
+                prop = Desktop::Types::COverridableVar<T>(std::stof(s), Desktop::Types::PRIORITY_SET_PROP);
+        } else if constexpr (std::is_same_v<T, std::string>)
+            prop = Desktop::Types::COverridableVar<T>(s, Desktop::Types::PRIORITY_SET_PROP);
+    } catch (...) { Log::logger->log(Log::ERR, "Hyprctl: parsePropTrivial: failed to parse setprop for {}", s); }
+}
+
+SDispatchResult CKeybindManager::setProp(std::string args) {
+    CVarList vars(args, 3, ' ');
+
+    if (vars.size() < 3)
+        return {.success = false, .error = "Not enough args"};
+
+    const auto PLASTWINDOW = Desktop::focusState()->window();
+    const auto PWINDOW     = g_pCompositor->getWindowByRegex(vars[0]);
+
+    if (!PWINDOW)
+        return {.success = false, .error = "Window not found"};
+
+    const auto PROP = vars[1];
+    const auto VAL  = vars[2];
+
+    bool       noFocus = PWINDOW->m_ruleApplicator->noFocus().valueOrDefault();
+
+    try {
+        if (PROP == "max_size") {
+            const auto SIZE = PWINDOW->calculateExpression(VAL);
+            if (!SIZE) {
+                Log::logger->log(Log::ERR, "failed to parse {} as an expression", VAL);
+                throw "failed to parse expression";
+            }
+            PWINDOW->m_ruleApplicator->maxSizeOverride(Desktop::Types::COverridableVar(*SIZE, Desktop::Types::PRIORITY_SET_PROP));
+            PWINDOW->clampWindowSize(std::nullopt, PWINDOW->m_ruleApplicator->maxSize().value());
+            PWINDOW->setHidden(false);
+        } else if (PROP == "min_size") {
+            const auto SIZE = PWINDOW->calculateExpression(VAL);
+            if (!SIZE) {
+                Log::logger->log(Log::ERR, "failed to parse {} as an expression", VAL);
+                throw "failed to parse expression";
+            }
+            PWINDOW->m_ruleApplicator->minSizeOverride(Desktop::Types::COverridableVar(*SIZE, Desktop::Types::PRIORITY_SET_PROP));
+            PWINDOW->clampWindowSize(PWINDOW->m_ruleApplicator->minSize().value(), std::nullopt);
+            PWINDOW->setHidden(false);
+        } else if (PROP == "active_border_color" || PROP == "inactive_border_color") {
+            Config::CGradientValueData colorData = {};
+            if (vars.size() > 4) {
+                for (int i = 3; i < sc<int>(vars.size()); ++i) {
+                    const auto TOKEN = vars[i];
+                    if (TOKEN.ends_with("deg"))
+                        colorData.m_angle = std::stoi(TOKEN.substr(0, TOKEN.size() - 3)) * (PI / 180.0);
+                    else
+                        configStringToInt(TOKEN).and_then([&colorData](const auto& e) {
+                            colorData.m_colors.push_back(e);
+                            return std::invoke_result_t<decltype(::configStringToInt), const std::string&>(1);
+                        });
+                }
+            } else if (VAL != "-1")
+                configStringToInt(VAL).and_then([&colorData](const auto& e) {
+                    colorData.m_colors.push_back(e);
+                    return std::invoke_result_t<decltype(::configStringToInt), const std::string&>(1);
+                });
+
+            colorData.updateColorsOk();
+
+            if (PROP == "active_border_color")
+                PWINDOW->m_ruleApplicator->activeBorderColorOverride(Desktop::Types::COverridableVar(colorData, Desktop::Types::PRIORITY_SET_PROP));
+            else
+                PWINDOW->m_ruleApplicator->inactiveBorderColorOverride(Desktop::Types::COverridableVar(colorData, Desktop::Types::PRIORITY_SET_PROP));
+        } else if (PROP == "opacity") {
+            PWINDOW->m_ruleApplicator->alphaOverride(Desktop::Types::COverridableVar(
+                Desktop::Types::SAlphaValue{std::stof(VAL), PWINDOW->m_ruleApplicator->alpha().valueOrDefault().overridden}, Desktop::Types::PRIORITY_SET_PROP));
+        } else if (PROP == "opacity_inactive") {
+            PWINDOW->m_ruleApplicator->alphaInactiveOverride(Desktop::Types::COverridableVar(
+                Desktop::Types::SAlphaValue{std::stof(VAL), PWINDOW->m_ruleApplicator->alphaInactive().valueOrDefault().overridden}, Desktop::Types::PRIORITY_SET_PROP));
+        } else if (PROP == "opacity_fullscreen") {
+            PWINDOW->m_ruleApplicator->alphaFullscreenOverride(Desktop::Types::COverridableVar(
+                Desktop::Types::SAlphaValue{std::stof(VAL), PWINDOW->m_ruleApplicator->alphaFullscreen().valueOrDefault().overridden}, Desktop::Types::PRIORITY_SET_PROP));
+        } else if (PROP == "opacity_override") {
+            PWINDOW->m_ruleApplicator->alphaOverride(Desktop::Types::COverridableVar(
+                Desktop::Types::SAlphaValue{PWINDOW->m_ruleApplicator->alpha().valueOrDefault().alpha, sc<bool>(configStringToInt(VAL).value_or(0))},
+                Desktop::Types::PRIORITY_SET_PROP));
+        } else if (PROP == "opacity_inactive_override") {
+            PWINDOW->m_ruleApplicator->alphaInactiveOverride(Desktop::Types::COverridableVar(
+                Desktop::Types::SAlphaValue{PWINDOW->m_ruleApplicator->alphaInactive().valueOrDefault().alpha, sc<bool>(configStringToInt(VAL).value_or(0))},
+                Desktop::Types::PRIORITY_SET_PROP));
+        } else if (PROP == "opacity_fullscreen_override") {
+            PWINDOW->m_ruleApplicator->alphaFullscreenOverride(Desktop::Types::COverridableVar(
+                Desktop::Types::SAlphaValue{PWINDOW->m_ruleApplicator->alphaFullscreen().valueOrDefault().alpha, sc<bool>(configStringToInt(VAL).value_or(0))},
+                Desktop::Types::PRIORITY_SET_PROP));
+        } else if (PROP == "allows_input")
+            parsePropTrivial(PWINDOW->m_ruleApplicator->allowsInput(), VAL);
+        else if (PROP == "decorate")
+            parsePropTrivial(PWINDOW->m_ruleApplicator->decorate(), VAL);
+        else if (PROP == "focus_on_activate")
+            parsePropTrivial(PWINDOW->m_ruleApplicator->focusOnActivate(), VAL);
+        else if (PROP == "keep_aspect_ratio")
+            parsePropTrivial(PWINDOW->m_ruleApplicator->keepAspectRatio(), VAL);
+        else if (PROP == "nearest_neighbor")
+            parsePropTrivial(PWINDOW->m_ruleApplicator->nearestNeighbor(), VAL);
+        else if (PROP == "no_anim")
+            parsePropTrivial(PWINDOW->m_ruleApplicator->noAnim(), VAL);
+        else if (PROP == "no_blur")
+            parsePropTrivial(PWINDOW->m_ruleApplicator->noBlur(), VAL);
+        else if (PROP == "no_dim")
+            parsePropTrivial(PWINDOW->m_ruleApplicator->noDim(), VAL);
+        else if (PROP == "no_focus")
+            parsePropTrivial(PWINDOW->m_ruleApplicator->noFocus(), VAL);
+        else if (PROP == "no_max_size")
+            parsePropTrivial(PWINDOW->m_ruleApplicator->noMaxSize(), VAL);
+        else if (PROP == "no_shadow")
+            parsePropTrivial(PWINDOW->m_ruleApplicator->noShadow(), VAL);
+        else if (PROP == "no_shortcuts_inhibit")
+            parsePropTrivial(PWINDOW->m_ruleApplicator->noShortcutsInhibit(), VAL);
+        else if (PROP == "dim_around")
+            parsePropTrivial(PWINDOW->m_ruleApplicator->dimAround(), VAL);
+        else if (PROP == "opaque")
+            parsePropTrivial(PWINDOW->m_ruleApplicator->opaque(), VAL);
+        else if (PROP == "force_rgbx")
+            parsePropTrivial(PWINDOW->m_ruleApplicator->RGBX(), VAL);
+        else if (PROP == "sync_fullscreen")
+            parsePropTrivial(PWINDOW->m_ruleApplicator->syncFullscreen(), VAL);
+        else if (PROP == "immediate")
+            parsePropTrivial(PWINDOW->m_ruleApplicator->tearing(), VAL);
+        else if (PROP == "xray")
+            parsePropTrivial(PWINDOW->m_ruleApplicator->xray(), VAL);
+        else if (PROP == "render_unfocused")
+            parsePropTrivial(PWINDOW->m_ruleApplicator->renderUnfocused(), VAL);
+        else if (PROP == "no_follow_mouse")
+            parsePropTrivial(PWINDOW->m_ruleApplicator->noFollowMouse(), VAL);
+        else if (PROP == "no_screen_share")
+            parsePropTrivial(PWINDOW->m_ruleApplicator->noScreenShare(), VAL);
+        else if (PROP == "no_vrr")
+            parsePropTrivial(PWINDOW->m_ruleApplicator->noVRR(), VAL);
+        else if (PROP == "persistent_size")
+            parsePropTrivial(PWINDOW->m_ruleApplicator->persistentSize(), VAL);
+        else if (PROP == "stay_focused")
+            parsePropTrivial(PWINDOW->m_ruleApplicator->stayFocused(), VAL);
+        else if (PROP == "idle_inhibit")
+            parsePropTrivial(PWINDOW->m_ruleApplicator->idleInhibitMode(), VAL);
+        else if (PROP == "border_size")
+            parsePropTrivial(PWINDOW->m_ruleApplicator->borderSize(), VAL);
+        else if (PROP == "rounding")
+            parsePropTrivial(PWINDOW->m_ruleApplicator->rounding(), VAL);
+        else if (PROP == "rounding_power")
+            parsePropTrivial(PWINDOW->m_ruleApplicator->roundingPower(), VAL);
+        else if (PROP == "scroll_mouse")
+            parsePropTrivial(PWINDOW->m_ruleApplicator->scrollMouse(), VAL);
+        else if (PROP == "scroll_touchpad")
+            parsePropTrivial(PWINDOW->m_ruleApplicator->scrollTouchpad(), VAL);
+        else if (PROP == "animation")
+            parsePropTrivial(PWINDOW->m_ruleApplicator->animationStyle(), VAL);
+        else
+            return {.success = false, .error = "prop not found"};
+
+    } catch (std::exception& e) { return {.success = false, .error = std::format("Error parsing prop value: {}", std::string(e.what()))}; }
+
+    g_pCompositor->updateAllWindowsAnimatedDecorationValues();
+
+    if (PWINDOW->m_ruleApplicator->noFocus().valueOrDefault() != noFocus) {
+        // FIXME: what the fuck is going on here? -vax
+        Desktop::focusState()->rawWindowFocus(nullptr, Desktop::FOCUS_REASON_KEYBIND);
+        Desktop::focusState()->fullWindowFocus(PWINDOW, Desktop::FOCUS_REASON_KEYBIND);
+        Desktop::focusState()->fullWindowFocus(PLASTWINDOW, Desktop::FOCUS_REASON_KEYBIND);
+    }
+
+    if (PROP == "no_vrr")
+        Config::monitorRuleMgr()->ensureVRR();
+
+    for (auto const& m : g_pCompositor->m_monitors) {
+        if (m->m_activeWorkspace)
+            m->m_activeWorkspace->m_space->recalculate();
+    }
+
+    return {};
+}
+
+SDispatchResult CKeybindManager::forceIdle(std::string args) {
+    std::optional<float> duration = getPlusMinusKeywordResult(args, 0);
+
+    if (!duration.has_value()) {
+        Log::logger->log(Log::ERR, "Duration invalid in forceIdle!");
+        return {.success = false, .error = "Duration invalid in forceIdle!"};
+    }
+
+    PROTO::idle->setTimers(duration.value() * 1000.0);
+
+    return {};
+}
+
+SDispatchResult CKeybindManager::sendkeystate(std::string args) {
+    // args=<NEW_MODKEYS><NEW_KEY><STATE>[,WINDOW_RULES]
+    const auto ARGS = CVarList(args, 4);
+    if (ARGS.size() != 4) {
+        Log::logger->log(Log::ERR, "sendkeystate: invalid args");
+        return {.success = false, .error = "sendkeystate: invalid args"};
+    }
+
+    const auto STATE = ARGS[2];
+
+    if (STATE != "down" && STATE != "repeat" && STATE != "up") {
+        Log::logger->log(Log::ERR, "sendkeystate: invalid state, must be 'down', 'repeat', or 'up'");
+        return {.success = false, .error = "sendkeystate: invalid state, must be 'down', 'repeat', or 'up'"};
+    }
+
+    std::string modifiedArgs = ARGS[0] + "," + ARGS[1] + "," + ARGS[3];
+
+    const int   oldPassPressed = g_pKeybindManager->m_passPressed;
+
+    if (STATE == "down")
+        g_pKeybindManager->m_passPressed = 1;
+    else if (STATE == "up")
+        g_pKeybindManager->m_passPressed = 0;
+    else if (STATE == "repeat")
+        g_pKeybindManager->m_passPressed = 1;
+
+    auto result = sendshortcut(modifiedArgs);
+
+    if (STATE == "repeat" && result.success)
+        result = sendshortcut(modifiedArgs);
+
+    g_pKeybindManager->m_passPressed = oldPassPressed;
+
+    if (!result.success && !result.error.empty()) {
+        size_t pos = result.error.find("sendshortcut:");
+        if (pos != std::string::npos)
+            result.error = "sendkeystate:" + result.error.substr(pos + 13);
+    }
+
+    return result;
+}
