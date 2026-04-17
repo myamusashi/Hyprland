@@ -310,3 +310,4 @@ void CNotificationOverlay::draw(PHLMONITOR pMonitor) {
 bool CNotificationOverlay::hasAny() {
     return !m_notifications.empty();
 }
+
