@@ -5,6 +5,8 @@
 #include <vector>
 #include <string>
 #include <optional>
+#include <chrono>
+#include <string_view>
 #include <unordered_map>
 
 #include "../../helpers/memory/Memory.hpp"
@@ -74,6 +76,18 @@ namespace Config::Lua {
         // execute an arbitrary lua string on the current state.
         std::optional<std::string> eval(const std::string& code);
 
+        int                        guardedPCall(int nargs, int nresults, int errfunc, int timeoutMs, std::string_view context);
+
+        static CConfigManager*     fromLuaState(lua_State* L);
+
+        static constexpr int       LUA_WATCHDOG_INSTRUCTION_INTERVAL = 10000;
+        static constexpr int       LUA_TIMEOUT_CONFIG_RELOAD_MS      = 1500;
+        static constexpr int       LUA_TIMEOUT_EVENT_CALLBACK_MS     = 50;
+        static constexpr int       LUA_TIMEOUT_KEYBIND_CALLBACK_MS   = 100;
+        static constexpr int       LUA_TIMEOUT_TIMER_CALLBACK_MS     = 50;
+        static constexpr int       LUA_TIMEOUT_EVAL_MS               = 250;
+        static constexpr int       LUA_TIMEOUT_DISPATCH_MS           = 100;
+
         bool                       isFirstLaunch() const;
 
         std::string                m_currentSubmap;
@@ -102,19 +116,25 @@ namespace Config::Lua {
         std::unordered_map<std::string, SP<Desktop::Rule::CLayerRule>>  m_luaLayerRules;
 
       private:
-        void        reinitLuaState();
-        void        postConfigReload();
-        void        registerValue(const char* name, ILuaConfigValue* val);
-        void        cleanTimers();
-        std::string luaConfigValueName(const std::string& s);
+        void                                  reinitLuaState();
+        void                                  postConfigReload();
+        void                                  registerValue(const char* name, ILuaConfigValue* val);
+        void                                  cleanTimers();
+        std::string                           luaConfigValueName(const std::string& s);
 
-        lua_State*  m_lua = nullptr;
+        static void                           watchdogHook(lua_State* L, lua_Debug* ar);
 
-        bool        m_lastConfigVerificationWasSuccessful = true;
-        bool        m_isFirstLaunch                       = true;
-        bool        m_manualCrashInitiated                = false;
+        lua_State*                            m_lua = nullptr;
 
-        std::string m_mainConfigPath;
+        bool                                  m_lastConfigVerificationWasSuccessful = true;
+        bool                                  m_isFirstLaunch                       = true;
+        bool                                  m_manualCrashInitiated                = false;
+        bool                                  m_watchdogActive                      = false;
+
+        std::chrono::steady_clock::time_point m_watchdogDeadline;
+        std::string                           m_watchdogContext;
+
+        std::string                           m_mainConfigPath;
 
         // this is here for legacy reasons.
         std::unordered_map<std::string, const void*> m_configPtrMap;

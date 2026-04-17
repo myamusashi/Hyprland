@@ -232,7 +232,7 @@ ActionResult Actions::pinWindow(eTogglableAction action, std::optional<PHLWINDOW
     if (!PMONITOR)
         return std::unexpected("Window has no monitor");
 
-    window->moveToWorkspace(PMONITOR->m_activeWorkspace);
+    window->layoutTarget()->assignToSpace(PMONITOR->m_activeWorkspace->m_space);
     window->m_ruleApplicator->propertiesChanged(Desktop::Rule::RULE_PROP_PINNED);
 
     const auto PWORKSPACE = window->m_workspace;
@@ -1200,6 +1200,9 @@ static void moveWindowIntoGroupHelper(PHLWINDOW pWindow, PHLWINDOW pWindowInDire
         pWindow->moveToWorkspace(pWindowInDirection->m_workspace);
         pWindow->m_monitor = pWindowInDirection->m_monitor;
     }
+
+    if (pWindow->m_group)
+        pWindow->m_group->remove(pWindow);
 
     pWindowInDirection->m_group->add(pWindow);
     pWindowInDirection->m_group->setCurrent(pWindow);

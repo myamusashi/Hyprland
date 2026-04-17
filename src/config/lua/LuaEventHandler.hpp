@@ -5,6 +5,8 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+#include <optional>
+#include <cstdint>
 
 #include "../../helpers/memory/Memory.hpp"
 #include "../../helpers/signal/Signal.hpp"
@@ -28,17 +30,30 @@ namespace Config::Lua {
         ~CLuaEventHandler();
 
         // Store a Lua function (as a registry ref) to be called when `name` fires.
-        // Returns false and leaves the ref unclaimed if the event name is unknown.
-        bool                                          registerEvent(const std::string& name, int luaRef);
+        // Returns a subscription handle, or std::nullopt if the event name is unknown.
+        std::optional<uint64_t>                       registerEvent(const std::string& name, int luaRef);
+        bool                                          unregisterEvent(uint64_t handle);
 
         static const std::unordered_set<std::string>& knownEvents();
 
       private:
-        lua_State*                                        m_lua = nullptr;
-        std::unordered_map<std::string, std::vector<int>> m_callbacks;
-        std::vector<CHyprSignalListener>                  m_listeners;
+        struct SSubscription {
+            std::string eventName;
+            int         luaRef = -1;
+        };
 
-        void                                              dispatch(const std::string& name, int nargs, const std::function<void()>& pushArgs);
+        lua_State*                                             m_lua = nullptr;
+        std::unordered_map<std::string, std::vector<uint64_t>> m_callbacks;
+        std::unordered_map<uint64_t, SSubscription>            m_subscriptions;
+        std::unordered_set<uint64_t>                           m_activeHandles;
+        std::unordered_set<uint64_t>                           m_reentrancyWarnedHandles;
+        uint64_t                                               m_nextHandle    = 1;
+        size_t                                                 m_dispatchDepth = 0;
+        std::vector<CHyprSignalListener>                       m_listeners;
+
+        static constexpr size_t                                MAX_DISPATCH_DEPTH = 32;
+
+        void                                                   dispatch(const std::string& name, int nargs, const std::function<void()>& pushArgs);
     };
 
 } // namespace Config::Lua

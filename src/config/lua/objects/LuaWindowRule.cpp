@@ -8,7 +8,28 @@ using namespace Config::Lua;
 
 static constexpr const char* MT = "HL.WindowRule";
 
-static int                   windowRuleSetEnabled(lua_State* L) {
+//
+static int windowRuleEq(lua_State* L) {
+    const auto* lhs = static_cast<WP<Desktop::Rule::CWindowRule>*>(luaL_checkudata(L, 1, MT));
+    const auto* rhs = static_cast<WP<Desktop::Rule::CWindowRule>*>(luaL_checkudata(L, 2, MT));
+
+    lua_pushboolean(L, lhs->lock() == rhs->lock());
+    return 1;
+}
+
+static int windowRuleToString(lua_State* L) {
+    const auto* ref  = static_cast<WP<Desktop::Rule::CWindowRule>*>(luaL_checkudata(L, 1, MT));
+    const auto  rule = ref->lock();
+
+    if (!rule)
+        lua_pushstring(L, "HL.WindowRule(expired)");
+    else
+        lua_pushfstring(L, "HL.WindowRule(%p)", rule.get());
+
+    return 1;
+}
+
+static int windowRuleSetEnabled(lua_State* L) {
     auto* ref = static_cast<WP<Desktop::Rule::CWindowRule>*>(luaL_checkudata(L, 1, MT));
     luaL_checktype(L, 2, LUA_TBOOLEAN);
 
@@ -49,7 +70,7 @@ static int windowRuleIndex(lua_State* L) {
 }
 
 void Objects::CLuaWindowRule::setup(lua_State* L) {
-    registerMetatable(L, MT, windowRuleIndex, gcRef<WP<Desktop::Rule::CWindowRule>>);
+    registerMetatable(L, MT, windowRuleIndex, gcRef<WP<Desktop::Rule::CWindowRule>>, windowRuleEq, windowRuleToString);
 }
 
 void Objects::CLuaWindowRule::push(lua_State* L, const SP<Desktop::Rule::CWindowRule>& rule) {

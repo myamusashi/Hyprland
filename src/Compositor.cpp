@@ -74,7 +74,7 @@
 #include "render/AsyncResourceGatherer.hpp"
 #include "plugins/PluginSystem.hpp"
 #include "hyprerror/HyprError.hpp"
-#include "debug/HyprNotificationOverlay.hpp"
+#include "notification/NotificationOverlay.hpp"
 #include "debug/HyprDebugOverlay.hpp"
 #include "helpers/MonitorFrameScheduler.hpp"
 #include "i18n/Engine.hpp"
@@ -591,7 +591,7 @@ void CCompositor::cleanup() {
     g_pDecorationPositioner.reset();
     g_pCursorManager.reset();
     g_pPluginSystem.reset();
-    g_pHyprNotificationOverlay.reset();
+    Notification::overlay().reset();
     g_pDebugOverlay.reset();
     g_pEventManager.reset();
     g_pSessionLockManager.reset();
@@ -701,8 +701,8 @@ void CCompositor::initManagers(eManagersInitStage stage) {
             Log::logger->log(Log::DEBUG, "Creating the HyprDebugOverlay!");
             g_pDebugOverlay = makeUnique<CHyprDebugOverlay>();
 
-            Log::logger->log(Log::DEBUG, "Creating the HyprNotificationOverlay!");
-            g_pHyprNotificationOverlay = makeUnique<CHyprNotificationOverlay>();
+            Log::logger->log(Log::DEBUG, "Creating the NotificationOverlay!");
+            Notification::overlay();
 
             Log::logger->log(Log::DEBUG, "Creating the PluginSystem!");
             g_pPluginSystem = makeUnique<CPluginSystem>();
@@ -926,7 +926,7 @@ PHLWINDOW CCompositor::vectorToWindowUnified(const Vector2D& pos, uint8_t proper
                 w != pIgnoreWindow && !isShadowedByModal(w)) {
                 const auto BB  = w->getWindowBoxUnified(properties);
                 CBox       box = BB.copy().expand(!w->isX11OverrideRedirect() ? BORDER_GRAB_AREA : 0);
-                if (box.containsPoint(g_pPointerManager->position()))
+                if (box.containsPoint(pos))
                     return w;
 
                 if (!w->m_isX11) {
@@ -968,7 +968,7 @@ PHLWINDOW CCompositor::vectorToWindowUnified(const Vector2D& pos, uint8_t proper
 
                     const auto BB  = w->getWindowBoxUnified(properties);
                     CBox       box = BB.copy().expand(!w->isX11OverrideRedirect() ? BORDER_GRAB_AREA : 0);
-                    if (box.containsPoint(g_pPointerManager->position())) {
+                    if (box.containsPoint(pos)) {
 
                         if (w->m_isX11 && w->isX11OverrideRedirect() && !w->m_xwaylandSurface->wantsFocus()) {
                             // Override Redirect
@@ -1296,6 +1296,8 @@ void CCompositor::changeWindowZOrder(PHLWINDOW pWindow, bool top) {
 
     if (top)
         pWindow->m_createdOverFullscreen = true;
+    else
+        pWindow->m_createdOverFullscreen = false;
 
     if (pWindow == (top ? m_windows.back() : m_windows.front()))
         return;
@@ -2570,7 +2572,7 @@ void CCompositor::performUserChecks() {
     if (!*PNOCHECKXDG) {
         const auto CURRENT_DESKTOP_ENV = getenv("XDG_CURRENT_DESKTOP");
         if (!CURRENT_DESKTOP_ENV || std::string{CURRENT_DESKTOP_ENV} != "Hyprland") {
-            g_pHyprNotificationOverlay->addNotification(
+            Notification::overlay()->addNotification(
                 I18n::i18nEngine()->localize(I18n::TXT_KEY_NOTIF_EXTERNAL_XDG_DESKTOP, {{"value", CURRENT_DESKTOP_ENV ? CURRENT_DESKTOP_ENV : "unset"}}), CHyprColor{}, 15000,
                 ICON_WARNING);
         }
@@ -2578,16 +2580,16 @@ void CCompositor::performUserChecks() {
 
     if (!*PNOCHECKGUIUTILS) {
         if (!NFsUtils::executableExistsInPath("hyprland-dialog"))
-            g_pHyprNotificationOverlay->addNotification(I18n::i18nEngine()->localize(I18n::TXT_KEY_NOTIF_NO_GUIUTILS), CHyprColor{}, 15000, ICON_WARNING);
+            Notification::overlay()->addNotification(I18n::i18nEngine()->localize(I18n::TXT_KEY_NOTIF_NO_GUIUTILS), CHyprColor{}, 15000, ICON_WARNING);
     }
 
     if (g_pHyprRenderer->m_failedAssetsNo > 0) {
-        g_pHyprNotificationOverlay->addNotification(I18n::i18nEngine()->localize(I18n::TXT_KEY_NOTIF_FAILED_ASSETS, {{"count", std::to_string(g_pHyprRenderer->m_failedAssetsNo)}}),
-                                                    CHyprColor{1.0, 0.1, 0.1, 1.0}, 15000, ICON_ERROR);
+        Notification::overlay()->addNotification(I18n::i18nEngine()->localize(I18n::TXT_KEY_NOTIF_FAILED_ASSETS, {{"count", std::to_string(g_pHyprRenderer->m_failedAssetsNo)}}),
+                                                 CHyprColor{1.0, 0.1, 0.1, 1.0}, 15000, ICON_ERROR);
     }
 
     if (!m_watchdogWriteFd.isValid() && !*PNOWATCHDOG)
-        g_pHyprNotificationOverlay->addNotification(I18n::i18nEngine()->localize(I18n::TXT_KEY_NOTIF_NO_WATCHDOG), CHyprColor{1.0, 0.1, 0.1, 1.0}, 15000, ICON_WARNING);
+        Notification::overlay()->addNotification(I18n::i18nEngine()->localize(I18n::TXT_KEY_NOTIF_NO_WATCHDOG), CHyprColor{1.0, 0.1, 0.1, 1.0}, 15000, ICON_WARNING);
 
     if (m_safeMode)
         openSafeModeBox();
@@ -2727,8 +2729,8 @@ void CCompositor::checkMonitorOverlaps() {
     for (const auto& m : m_monitors) {
         if (!monitorRegion.copy().intersect(m->logicalBox()).empty()) {
             Log::logger->log(Log::ERR, "Monitor {}: detected overlap with layout", m->m_name);
-            g_pHyprNotificationOverlay->addNotification(I18n::i18nEngine()->localize(I18n::TXT_KEY_NOTIF_INVALID_MONITOR_LAYOUT, {{"name", m->m_name}}), CHyprColor{}, 15000,
-                                                        ICON_WARNING);
+            Notification::overlay()->addNotification(I18n::i18nEngine()->localize(I18n::TXT_KEY_NOTIF_INVALID_MONITOR_LAYOUT, {{"name", m->m_name}}), CHyprColor{}, 15000,
+                                                     ICON_WARNING);
 
             break;
         }
@@ -3023,7 +3025,7 @@ void CCompositor::onNewMonitor(SP<Aquamarine::IOutput> output) {
 PImageDescription CCompositor::getPreferredImageDescription() {
     if (!PROTO::colorManagement) {
         Log::logger->log(Log::ERR, "FIXME: color management protocol is not enabled, returning empty image description");
-        return DEFAULT_IMAGE_DESCRIPTION;
+        return getDefaultImageDescription();
     }
     Log::logger->log(Log::WARN, "FIXME: color management protocol is enabled, determine correct preferred image description");
     // should determine some common settings to avoid unnecessary transformations while keeping maximum displayable precision
@@ -3033,7 +3035,7 @@ PImageDescription CCompositor::getPreferredImageDescription() {
 PImageDescription CCompositor::getHDRImageDescription() {
     if (!PROTO::colorManagement) {
         Log::logger->log(Log::ERR, "FIXME: color management protocol is not enabled, returning empty image description");
-        return DEFAULT_IMAGE_DESCRIPTION;
+        return getDefaultImageDescription();
     }
 
     return m_monitors.size() == 1 && m_monitors[0]->m_output && m_monitors[0]->m_output->parsedEDID.hdrMetadata.has_value() ?

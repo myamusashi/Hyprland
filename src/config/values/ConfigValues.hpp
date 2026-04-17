@@ -319,7 +319,6 @@ namespace Config::Values {
         MS<String>("misc:font_family", "Set the global default font to render the text.", "Sans"),
         MS<String>("misc:splash_font_family", "Changes the font used to render the splash text.", "[[EMPTY]]"),
         MS<Int>("misc:force_default_wallpaper", "Force any of the 3 default wallpapers. [-1/0/1/2]", -1, -1, 2),
-        MS<Bool>("misc:vfr", "controls the VFR status of Hyprland.", true),
         MS<Int>("misc:vrr", "controls the VRR (Adaptive Sync) of your monitors", 0, 0, 3, OptionMap{{"off", 0}, {"on", 1}, {"fullscreen", 2}, {"fullscreen_game", 3}}),
         MS<Bool>("misc:mouse_move_enables_dpms", "If DPMS is set to off, wake up the monitors if the mouse moves", false),
         MS<Bool>("misc:key_press_enables_dpms", "If DPMS is set to off, wake up the monitors if a key is pressed.", false),
@@ -397,7 +396,6 @@ namespace Config::Values {
         MS<Bool>("render:expand_undersized_textures", "Whether to expand textures that have not yet resized to be larger.", true),
         MS<Bool>("render:xp_mode", "Disable back buffer and bottom layer rendering.", false),
         MS<Int>("render:ctm_animation", "Whether to enable a fade animation for CTM changes.", 2, 0, 2, OptionMap{{"disable", 0}, {"enable", 1}, {"auto", 2}}),
-        MS<Int>("render:cm_fs_passthrough", "Passthrough color settings for fullscreen apps when possible", 2, 0, 2, OptionMap{{"disable", 0}, {"always", 1}, {"hdr_only", 2}}),
         MS<Bool>("render:cm_enabled", "Enable Color Management pipelines (requires restart to fully take effect)", true),
         MS<Bool>("render:send_content_type", "Report content type to allow monitor profile autoswitch", true),
         MS<Int>("render:cm_auto_hdr", "Auto-switch to hdr mode when fullscreen app is in hdr", 1, 0, 2, OptionMap{{"disable", 0}, {"hdr", 1}, {"hdredid", 2}}),
@@ -409,6 +407,8 @@ namespace Config::Values {
         MS<Bool>("render:use_shader_blur_blend", "Use experimental blurred bg blending", false),
         MS<Int>("render:use_fp16", "Use experimental internal FP16 buffer.", 2, 0, 2, OptionMap{{"disable", 0}, {"enable", 1}, {"auto", 2}}),
         MS<Int>("render:keep_unmodified_copy", "Keep umodified SDR frame copy for sreensharing.", 2, 0, 2, OptionMap{{"disable", 0}, {"enable", 1}, {"auto", 2}}),
+        MS<Int>("render:non_shader_cm_interop", "non_shader_cm interaction with ctm proto (hyprsunset and similar).", 2, 0, 2,
+                OptionMap{{"disable", 0}, {"enable", 1}, {"auto", 2}}),
 
         /*
          * cursor:
@@ -472,6 +472,8 @@ namespace Config::Values {
         MS<Bool>("debug:ds_handle_same_buffer_fifo", "Special case for DS with unmodified buffer unlocks fifo", true),
         MS<Bool>("debug:fifo_pending_workaround", "Fifo workaround for empty pending list", false),
         MS<Bool>("debug:render_solitary_wo_damage", "Render solitary window with empty damage", false),
+        MS<Bool>("debug:vfr", "controls the VFR status of Hyprland. Do not turn off unless debugging", true),
+        MS<Int>("debug:invalidate_fp16", "allow fp16 buffer invalidation.", 2, 0, 2, OptionMap{{"disable", 0}, {"enable", 1}, {"auto", 2}}),
 
         /*
          * layout:

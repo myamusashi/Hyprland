@@ -64,7 +64,7 @@ using namespace Hyprutils::OS;
 #include "../managers/XWaylandManager.hpp"
 #include "../plugins/PluginSystem.hpp"
 #include "../managers/animation/AnimationManager.hpp"
-#include "../debug/HyprNotificationOverlay.hpp"
+#include "../notification/NotificationOverlay.hpp"
 #include "../render/Renderer.hpp"
 #include "../render/OpenGL.hpp"
 #include "../layout/space/Space.hpp"
@@ -1267,7 +1267,8 @@ static std::string dispatchRequest(eHyprCtlOutputFormat format, std::string in) 
     if (Config::mgr()->type() == Config::CONFIG_LUA) {
         // For lua, this is just a wrapper for `eval("hl.dispatch(in)")
         std::string evalStr = std::format("hl.dispatch({})", in);
-        auto        ret     = evalRequest(format, evalStr);
+        auto        luaMgr  = dynamicPointerCast<Config::Lua::CConfigManager>(WP<Config::IConfigManager>(Config::mgr()));
+        auto        ret     = luaMgr->eval(evalStr).value_or("ok");
 
         if (ret.starts_with("ok") || in.contains("(") /* this likely means the user is passing a valid lua dispatch string */)
             return ret;
@@ -2036,7 +2037,7 @@ static std::string dispatchNotify(eHyprCtlOutputFormat format, std::string reque
 
     const auto MESSAGE = vars.join(" ", msgidx);
 
-    g_pHyprNotificationOverlay->addNotification(MESSAGE, color, time, sc<eIcons>(icon), fontsize);
+    Notification::overlay()->addNotification(MESSAGE, color, time, sc<eIcons>(icon), fontsize);
 
     return "ok";
 }
@@ -2056,7 +2057,7 @@ static std::string dispatchDismissNotify(eHyprCtlOutputFormat format, std::strin
         } catch (std::exception& e) { return "invalid arg 1"; }
     }
 
-    g_pHyprNotificationOverlay->dismissNotifications(amount);
+    Notification::overlay()->dismissNotifications(amount);
 
     return "ok";
 }

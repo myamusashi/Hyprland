@@ -8,7 +8,28 @@ using namespace Config::Lua;
 
 static constexpr const char* MT = "HL.LayerRule";
 
-static int                   layerRuleSetEnabled(lua_State* L) {
+//
+static int layerRuleEq(lua_State* L) {
+    const auto* lhs = static_cast<WP<Desktop::Rule::CLayerRule>*>(luaL_checkudata(L, 1, MT));
+    const auto* rhs = static_cast<WP<Desktop::Rule::CLayerRule>*>(luaL_checkudata(L, 2, MT));
+
+    lua_pushboolean(L, lhs->lock() == rhs->lock());
+    return 1;
+}
+
+static int layerRuleToString(lua_State* L) {
+    const auto* ref  = static_cast<WP<Desktop::Rule::CLayerRule>*>(luaL_checkudata(L, 1, MT));
+    const auto  rule = ref->lock();
+
+    if (!rule)
+        lua_pushstring(L, "HL.LayerRule(expired)");
+    else
+        lua_pushfstring(L, "HL.LayerRule(%p)", rule.get());
+
+    return 1;
+}
+
+static int layerRuleSetEnabled(lua_State* L) {
     auto* ref = static_cast<WP<Desktop::Rule::CLayerRule>*>(luaL_checkudata(L, 1, MT));
     luaL_checktype(L, 2, LUA_TBOOLEAN);
 
@@ -49,7 +70,7 @@ static int layerRuleIndex(lua_State* L) {
 }
 
 void Objects::CLuaLayerRule::setup(lua_State* L) {
-    registerMetatable(L, MT, layerRuleIndex, gcRef<WP<Desktop::Rule::CLayerRule>>);
+    registerMetatable(L, MT, layerRuleIndex, gcRef<WP<Desktop::Rule::CLayerRule>>, layerRuleEq, layerRuleToString);
 }
 
 void Objects::CLuaLayerRule::push(lua_State* L, const SP<Desktop::Rule::CLayerRule>& rule) {

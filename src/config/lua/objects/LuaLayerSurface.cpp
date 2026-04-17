@@ -1,4 +1,5 @@
 #include "LuaLayerSurface.hpp"
+#include "LuaMonitor.hpp"
 #include "LuaObjectHelpers.hpp"
 
 #include "../../../desktop/view/LayerSurface.hpp"
@@ -10,7 +11,28 @@ using namespace Config::Lua;
 
 static constexpr const char* MT = "HL.LayerSurface";
 
-static int                   layerSurfaceIndex(lua_State* L) {
+//
+static int layerSurfaceEq(lua_State* L) {
+    const auto* lhs = static_cast<PHLLSREF*>(luaL_checkudata(L, 1, MT));
+    const auto* rhs = static_cast<PHLLSREF*>(luaL_checkudata(L, 2, MT));
+
+    lua_pushboolean(L, lhs->lock() == rhs->lock());
+    return 1;
+}
+
+static int layerSurfaceToString(lua_State* L) {
+    const auto* ref = static_cast<PHLLSREF*>(luaL_checkudata(L, 1, MT));
+    const auto  ls  = ref->lock();
+
+    if (!ls)
+        lua_pushstring(L, "HL.LayerSurface(expired)");
+    else
+        lua_pushfstring(L, "HL.LayerSurface(%p)", ls.get());
+
+    return 1;
+}
+
+static int layerSurfaceIndex(lua_State* L) {
     auto*      ref = static_cast<PHLLSREF*>(luaL_checkudata(L, 1, MT));
     const auto ls  = ref->lock();
     if (!ls) {
@@ -35,6 +57,20 @@ static int                   layerSurfaceIndex(lua_State* L) {
         lua_pushstring(L, ls->m_namespace.c_str());
     else if (key == "pid")
         lua_pushinteger(L, static_cast<lua_Integer>(ls->getPID()));
+    else if (key == "monitor") {
+        const auto mon = ls->m_monitor.lock();
+        if (mon)
+            Objects::CLuaMonitor::push(L, mon);
+        else
+            lua_pushnil(L);
+    } else if (key == "mapped")
+        lua_pushboolean(L, ls->m_mapped);
+    else if (key == "layer")
+        lua_pushinteger(L, static_cast<lua_Integer>(ls->m_layer));
+    else if (key == "interactivity")
+        lua_pushinteger(L, static_cast<lua_Integer>(ls->m_interactivity));
+    else if (key == "above_fullscreen")
+        lua_pushboolean(L, ls->m_aboveFullscreen);
     else
         lua_pushnil(L);
 
@@ -42,7 +78,7 @@ static int                   layerSurfaceIndex(lua_State* L) {
 }
 
 void Objects::CLuaLayerSurface::setup(lua_State* L) {
-    registerMetatable(L, MT, layerSurfaceIndex, gcRef<PHLLSREF>);
+    registerMetatable(L, MT, layerSurfaceIndex, gcRef<PHLLSREF>, layerSurfaceEq, layerSurfaceToString);
 }
 
 void Objects::CLuaLayerSurface::push(lua_State* L, PHLLS ls) {

@@ -23,7 +23,8 @@ using namespace Config::Lua;
 
 static constexpr const char* MT = "HL.Window";
 
-static int                   getFocusHistoryID(PHLWINDOW wnd) {
+//
+static int getFocusHistoryID(PHLWINDOW wnd) {
     const auto& history = Desktop::History::windowTracker()->fullHistory();
     for (size_t i = 0; i < history.size(); ++i) {
         if (history[i].lock() == wnd)
@@ -31,6 +32,26 @@ static int                   getFocusHistoryID(PHLWINDOW wnd) {
     }
 
     return -1;
+}
+
+static int windowEq(lua_State* L) {
+    const auto* lhs = static_cast<PHLWINDOWREF*>(luaL_checkudata(L, 1, MT));
+    const auto* rhs = static_cast<PHLWINDOWREF*>(luaL_checkudata(L, 2, MT));
+
+    lua_pushboolean(L, lhs->lock() == rhs->lock());
+    return 1;
+}
+
+static int windowToString(lua_State* L) {
+    const auto* ref = static_cast<PHLWINDOWREF*>(luaL_checkudata(L, 1, MT));
+    const auto  w   = ref->lock();
+
+    if (!w)
+        lua_pushstring(L, "HL.Window(expired)");
+    else
+        lua_pushfstring(L, "HL.Window(%p)", w.get());
+
+    return 1;
 }
 
 static int windowIndex(lua_State* L) {
@@ -246,7 +267,7 @@ static int windowIndex(lua_State* L) {
 }
 
 void Objects::CLuaWindow::setup(lua_State* L) {
-    registerMetatable(L, MT, windowIndex, gcRef<PHLWINDOWREF>);
+    registerMetatable(L, MT, windowIndex, gcRef<PHLWINDOWREF>, windowEq, windowToString);
 }
 
 void Objects::CLuaWindow::push(lua_State* L, PHLWINDOW w) {

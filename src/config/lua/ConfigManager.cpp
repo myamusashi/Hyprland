@@ -3,6 +3,7 @@
 #include "DefaultConfig.hpp"
 
 #include <climits>
+#include <algorithm>
 #include <functional>
 #include <fstream>
 #include <hyprutils/string/String.hpp>
@@ -34,7 +35,7 @@
 #include "../../managers/EventManager.hpp"
 #include "../../managers/eventLoop/EventLoopManager.hpp"
 #include "../../managers/input/trackpad/TrackpadGestures.hpp"
-#include "../../debug/HyprNotificationOverlay.hpp"
+#include "../../notification/NotificationOverlay.hpp"
 #include "../../render/decorations/CHyprGroupBarDecoration.hpp"
 
 using namespace Config;
@@ -43,6 +44,58 @@ using namespace Hyprutils::String;
 
 CConfigManager::CConfigManager() : m_mainConfigPath(Supplementary::Jeremy::getMainConfigPath()->path) {
     ;
+}
+
+CConfigManager* CConfigManager::fromLuaState(lua_State* L) {
+    if (!L)
+        return nullptr;
+
+    lua_getfield(L, LUA_REGISTRYINDEX, "hl_lua_manager");
+    auto* mgr = static_cast<CConfigManager*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    return mgr;
+}
+
+void CConfigManager::watchdogHook(lua_State* L, lua_Debug* /*ar*/) {
+    auto* mgr = fromLuaState(L);
+    if (!mgr || !mgr->m_watchdogActive)
+        return;
+
+    if (std::chrono::steady_clock::now() <= mgr->m_watchdogDeadline)
+        return;
+
+    const auto& context = mgr->m_watchdogContext;
+    if (context.empty())
+        luaL_error(L, "[Lua] execution timed out");
+
+    luaL_error(L, "[Lua] execution timed out in %s", context.c_str());
+}
+
+int CConfigManager::guardedPCall(int nargs, int nresults, int errfunc, int timeoutMs, std::string_view context) {
+    if (!m_lua)
+        return LUA_ERRERR;
+
+    const auto                                  prevHook  = lua_gethook(m_lua);
+    const int                                   prevMask  = lua_gethookmask(m_lua);
+    const int                                   prevCount = lua_gethookcount(m_lua);
+
+    const bool                                  prevWatchdogActive   = m_watchdogActive;
+    const std::chrono::steady_clock::time_point prevWatchdogDeadline = m_watchdogDeadline;
+    const std::string                           prevWatchdogContext  = m_watchdogContext;
+
+    m_watchdogActive   = timeoutMs > 0;
+    m_watchdogDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(std::max(timeoutMs, 1));
+    m_watchdogContext  = context;
+
+    lua_sethook(m_lua, &CConfigManager::watchdogHook, LUA_MASKCOUNT, LUA_WATCHDOG_INSTRUCTION_INTERVAL);
+    const int result = lua_pcall(m_lua, nargs, nresults, errfunc);
+
+    lua_sethook(m_lua, prevHook, prevMask, prevCount);
+    m_watchdogActive   = prevWatchdogActive;
+    m_watchdogDeadline = prevWatchdogDeadline;
+    m_watchdogContext  = prevWatchdogContext;
+
+    return result;
 }
 
 eConfigManagerType CConfigManager::type() {
@@ -57,6 +110,11 @@ void CConfigManager::cleanTimers() {
     for (auto& t : m_luaTimers) {
         t.timer->cancel();
         g_pEventLoopManager->removeTimer(t.timer);
+
+        if (m_lua && t.luaRef != LUA_NOREF) {
+            luaL_unref(m_lua, LUA_REGISTRYINDEX, t.luaRef);
+            t.luaRef = LUA_NOREF;
+        }
     }
     m_luaTimers.clear();
 }
@@ -74,6 +132,15 @@ void CConfigManager::reinitLuaState() {
 
     m_lua = luaL_newstate();
     luaL_openlibs(m_lua);
+
+    lua_getglobal(m_lua, "debug");
+    if (lua_istable(m_lua, -1)) {
+        lua_pushnil(m_lua);
+        lua_setfield(m_lua, -2, "sethook");
+        lua_pushnil(m_lua);
+        lua_setfield(m_lua, -2, "gethook");
+    }
+    lua_pop(m_lua, 1);
 
     lua_pushlightuserdata(m_lua, this);
     lua_setfield(m_lua, LUA_REGISTRYINDEX, "hl_lua_manager");
@@ -210,7 +277,7 @@ void CConfigManager::reload() {
     });
     lua_insert(m_lua, 1);
 
-    if (lua_pcall(m_lua, 0, 0, 1) != LUA_OK) {
+    if (guardedPCall(0, 0, 1, LUA_TIMEOUT_CONFIG_RELOAD_MS, "config reload") != LUA_OK) {
         addError(lua_tostring(m_lua, -1));
         lua_pop(m_lua, 1);
         m_lastConfigVerificationWasSuccessful = false;
@@ -218,6 +285,10 @@ void CConfigManager::reload() {
         m_lastConfigVerificationWasSuccessful = m_errors.empty();
 
     lua_remove(m_lua, 1);
+
+    // collect stale userdata after reload so HL.Notification __gc can
+    // promptly release pause leases from dropped references
+    lua_gc(m_lua, LUA_GCCOLLECT, 0);
 
     postConfigReload();
 
@@ -317,8 +388,8 @@ void CConfigManager::postConfigReload() {
 
     if (*PMANUALCRASH && !m_manualCrashInitiated) {
         m_manualCrashInitiated = true;
-        g_pHyprNotificationOverlay->addNotification("Manual crash has been set up. Set debug.manual_crash back to 0 in order to crash the compositor.", CHyprColor(0), 5000,
-                                                    ICON_INFO);
+        Notification::overlay()->addNotification("Manual crash has been set up. Set debug.manual_crash back to 0 in order to crash the compositor.", CHyprColor(0), 5000,
+                                                 ICON_INFO);
     } else if (m_manualCrashInitiated && !*PMANUALCRASH) {
         // cowabunga it is
         g_pHyprRenderer->initiateManualCrash();
@@ -362,7 +433,13 @@ std::optional<std::string> CConfigManager::eval(const std::string& code) {
     if (!m_lua)
         return "lua state not initialized";
 
-    if (luaL_dostring(m_lua, code.c_str()) != LUA_OK) {
+    if (luaL_loadstring(m_lua, code.c_str()) != LUA_OK) {
+        std::string err = lua_tostring(m_lua, -1);
+        lua_pop(m_lua, 1);
+        return err;
+    }
+
+    if (guardedPCall(0, 0, 0, LUA_TIMEOUT_EVAL_MS, "hyprctl eval") != LUA_OK) {
         std::string err = lua_tostring(m_lua, -1);
         lua_pop(m_lua, 1);
         return err;
