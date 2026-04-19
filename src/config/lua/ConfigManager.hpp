@@ -31,6 +31,7 @@ namespace Config::Supplementary {
 
 namespace Config::Lua {
     class CConfigManager;
+    class CConfigManagerPluginLuaTestAccessor;
 }
 
 namespace Config::Lua::Bindings {
@@ -70,6 +71,12 @@ namespace Config::Lua {
         virtual bool                             configVerifPassed() override;
 
         virtual std::expected<void, std::string> registerPluginValue(void* handle, SP<Config::Values::IValue> value) override;
+        virtual void                             onPluginUnload(void* handle) override;
+
+        int                                      invokePluginLuaFunctionByID(uint64_t id, lua_State* L);
+
+        std::expected<void, std::string>         registerPluginLuaFunction(void* handle, const std::string& namespace_, const std::string& name, PLUGIN_LUA_FN fn);
+        std::expected<void, std::string>         unregisterPluginLuaFunction(void* handle, const std::string& namespace_, const std::string& name);
 
         void                                     addError(std::string&& str);
 
@@ -91,6 +98,7 @@ namespace Config::Lua {
         bool                       isFirstLaunch() const;
 
         std::string                m_currentSubmap;
+        std::string                m_currentSubmapReset;
 
         UP<CLuaEventHandler>       m_eventHandler;
 
@@ -121,6 +129,9 @@ namespace Config::Lua {
         void                                  registerValue(const char* name, ILuaConfigValue* val);
         void                                  cleanTimers();
         std::string                           luaConfigValueName(const std::string& s);
+        std::expected<void, std::string>      registerPluginLuaFunctionInState(uint64_t id, const std::string& nameSpace, const std::string& name);
+        std::expected<void, std::string>      unregisterPluginLuaFunctionInState(const std::string& nameSpace, const std::string& name);
+        void                                  erasePluginLuaFunction(uint64_t id);
 
         static void                           watchdogHook(lua_State* L, lua_Debug* ar);
 
@@ -140,9 +151,24 @@ namespace Config::Lua {
         std::unordered_map<std::string, const void*> m_configPtrMap;
 
         // this is here for plugin reasons.
-        std::unordered_map<void* /* HANDLE */, std::vector<WP<ILuaConfigValue>>> m_pluginValues;
+        std::unordered_map<void* /* HANDLE */, std::vector<std::string>> m_pluginValues;
 
-        ILuaConfigValue*                                                         findDeviceValue(const std::string& dev, const std::string& field);
+        struct SPluginLuaFunction {
+            uint64_t              id     = 0;
+            void*                 handle = nullptr;
+            std::string           nameSpace;
+            std::string           name;
+            Config::PLUGIN_LUA_FN fn = nullptr;
+        };
+
+        std::unordered_map<uint64_t, SPluginLuaFunction>              m_pluginLuaFunctionsByID;
+        std::unordered_map<std::string, uint64_t>                     m_pluginLuaFunctionIDByPath;
+        std::unordered_map<void* /* HANDLE */, std::vector<uint64_t>> m_pluginLuaFunctionIDsByHandle;
+        uint64_t                                                      m_nextPluginLuaFunctionID = 1;
+
+        ILuaConfigValue*                                              findDeviceValue(const std::string& dev, const std::string& field);
+
+        friend class CConfigManagerPluginLuaTestAccessor;
     };
 
     WP<CConfigManager> mgr();

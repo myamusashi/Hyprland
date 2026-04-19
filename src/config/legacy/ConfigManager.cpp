@@ -2084,6 +2084,10 @@ std::string CConfigManager::currentConfigPath() {
     return m_configCurrentPath;
 }
 
+void CConfigManager::onPluginUnload(void* handle) {
+    removePluginConfig(handle);
+}
+
 std::expected<void, std::string> CConfigManager::registerPluginValue(void* handle, SP<Config::Values::IValue> value) {
     const std::string NAME = value->name();
 

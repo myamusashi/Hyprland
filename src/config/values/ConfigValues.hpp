@@ -104,7 +104,6 @@ namespace Config::Values {
         MS<Int>("decoration:shadow:range", "Shadow range (size) in layout px", 4, 0, 100),
         MS<Int>("decoration:shadow:render_power", "in what power to render the falloff (more power, the faster the falloff)", 3, 1, 4),
         MS<Bool>("decoration:shadow:sharp", "whether the shadow should be sharp or not.", false),
-        MS<Bool>("decoration:shadow:ignore_window", "if true, the shadow will not be rendered behind the window itself, only around it.", true),
         MS<Color>("decoration:shadow:color", "shadow's color. Alpha dictates shadow's opacity.", 0xee1a1a1a),
         MS<Color>("decoration:shadow:color_inactive", "inactive shadow color. (if not set, will fall back to col.shadow)", -1),
         MS<Vec2>("decoration:shadow:offset", "shadow's rendering offset.", Config::VEC2{}, vec2Range(-250, -250, 250, 250)),

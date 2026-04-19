@@ -4,6 +4,7 @@
 
 #include <climits>
 #include <algorithm>
+#include <cctype>
 #include <functional>
 #include <fstream>
 #include <hyprutils/string/String.hpp>
@@ -42,6 +43,28 @@ using namespace Config;
 using namespace Config::Lua;
 using namespace Hyprutils::String;
 
+static bool isValidLuaIdentifier(const std::string& value) {
+    if (value.empty())
+        return false;
+
+    if (!std::isalpha(value[0]) && value[0] != '_')
+        return false;
+
+    return std::ranges::all_of(value, [](const char& c) { return std::isalnum(c) || c == '_'; });
+}
+
+static int pluginLuaFunctionDispatcher(lua_State* L) {
+    auto* mgr = CConfigManager::fromLuaState(L);
+    if (!mgr)
+        return luaL_error(L, "hl.plugin: internal error: config manager unavailable");
+
+    if (!lua_isinteger(L, lua_upvalueindex(1)))
+        return luaL_error(L, "hl.plugin: internal error: invalid callback id");
+
+    const auto id = sc<uint64_t>(lua_tointeger(L, lua_upvalueindex(1)));
+    return mgr->invokePluginLuaFunctionByID(id, L);
+}
+
 CConfigManager::CConfigManager() : m_mainConfigPath(Supplementary::Jeremy::getMainConfigPath()->path) {
     ;
 }
@@ -51,7 +74,7 @@ CConfigManager* CConfigManager::fromLuaState(lua_State* L) {
         return nullptr;
 
     lua_getfield(L, LUA_REGISTRYINDEX, "hl_lua_manager");
-    auto* mgr = static_cast<CConfigManager*>(lua_touserdata(L, -1));
+    auto* mgr = sc<CConfigManager*>(lua_touserdata(L, -1));
     lua_pop(L, 1);
     return mgr;
 }
@@ -169,7 +192,7 @@ void CConfigManager::reinitLuaState() {
             lua_pushvalue(L, 1); // module name
             lua_call(L, 1, 2);   // -> loader?, filename?
             if (lua_isfunction(L, -2) && lua_isstring(L, -1)) {
-                auto* self = static_cast<CConfigManager*>(lua_touserdata(L, lua_upvalueindex(2)));
+                auto* self = sc<CConfigManager*>(lua_touserdata(L, lua_upvalueindex(2)));
                 self->m_configPaths.emplace_back(lua_tostring(L, -1));
             }
             return 2;
@@ -258,6 +281,7 @@ void CConfigManager::reload() {
     m_errors.clear();
     m_deviceConfigs.clear();
     m_registeredPlugins.clear();
+    m_eventHandler->clearEvents();
 
     if (g_pKeybindManager) {
         for (const auto& kb : g_pKeybindManager->m_keybinds) {
@@ -479,18 +503,18 @@ ILuaConfigValue* CConfigManager::findDeviceValue(const std::string& dev, const s
 int CConfigManager::getDeviceInt(const std::string& dev, const std::string& field, const std::string& fb) {
     std::string fallback = luaConfigValueName(fb);
     if (auto* v = findDeviceValue(normalizeDeviceName(dev), field))
-        return (int)*static_cast<const Config::INTEGER*>(v->data());
+        return (int)*sc<const Config::INTEGER*>(v->data());
     if (!fallback.empty() && m_configValues.contains(fallback))
-        return (int)*static_cast<const Config::INTEGER*>(m_configValues.at(fallback)->data());
+        return (int)*sc<const Config::INTEGER*>(m_configValues.at(fallback)->data());
     return 0;
 }
 
 float CConfigManager::getDeviceFloat(const std::string& dev, const std::string& field, const std::string& fb) {
     std::string fallback = luaConfigValueName(fb);
     if (auto* v = findDeviceValue(normalizeDeviceName(dev), field))
-        return *static_cast<const Config::FLOAT*>(v->data());
+        return *sc<const Config::FLOAT*>(v->data());
     if (!fallback.empty() && m_configValues.contains(fallback))
-        return *static_cast<const Config::FLOAT*>(m_configValues.at(fallback)->data());
+        return *sc<const Config::FLOAT*>(m_configValues.at(fallback)->data());
     return 0.F;
 }
 
@@ -498,9 +522,9 @@ Vector2D CConfigManager::getDeviceVec(const std::string& dev, const std::string&
     std::string fallback = luaConfigValueName(fb);
     auto        toVec    = [](const Config::VEC2& v) -> Vector2D { return {v.x, v.y}; };
     if (auto* val = findDeviceValue(normalizeDeviceName(dev), field))
-        return toVec(*static_cast<const Config::VEC2*>(val->data()));
+        return toVec(*sc<const Config::VEC2*>(val->data()));
     if (!fallback.empty() && m_configValues.contains(fallback))
-        return toVec(*static_cast<const Config::VEC2*>(m_configValues.at(fallback)->data()));
+        return toVec(*sc<const Config::VEC2*>(m_configValues.at(fallback)->data()));
     return {0, 0};
 }
 
@@ -508,9 +532,9 @@ std::string CConfigManager::getDeviceString(const std::string& dev, const std::s
     std::string fallback = luaConfigValueName(fb);
     auto        clean    = [](const Config::STRING& s) -> std::string { return s == STRVAL_EMPTY ? "" : s; };
     if (auto* v = findDeviceValue(normalizeDeviceName(dev), field))
-        return clean(*static_cast<const Config::STRING*>(v->data()));
+        return clean(*sc<const Config::STRING*>(v->data()));
     if (!fallback.empty() && m_configValues.contains(fallback))
-        return clean(*static_cast<const Config::STRING*>(m_configValues.at(fallback)->data()));
+        return clean(*sc<const Config::STRING*>(m_configValues.at(fallback)->data()));
     return "";
 }
 
@@ -661,12 +685,220 @@ std::expected<void, std::string> CConfigManager::registerPluginValue(void* handl
     if (m_configValues.contains(NAME))
         return std::unexpected("name collision: already registered");
 
-    auto                val  = fromGenericValue(value);
-    WP<ILuaConfigValue> weak = val;
+    auto val = fromGenericValue(value);
+
+    if (!val)
+        return std::unexpected("unsupported value type");
 
     m_configValues.emplace(NAME, std::move(val));
 
-    m_pluginValues[handle].emplace_back(weak);
+    m_pluginValues[handle].emplace_back(NAME);
 
     return {};
+}
+
+std::expected<void, std::string> CConfigManager::registerPluginLuaFunctionInState(uint64_t id, const std::string& nameSpace, const std::string& name) {
+    if (!m_lua)
+        return std::unexpected("lua state not initialized");
+
+    lua_getglobal(m_lua, "hl");
+    if (!lua_istable(m_lua, -1)) {
+        lua_pop(m_lua, 1);
+        return std::unexpected("missing global table 'hl'");
+    }
+
+    lua_getfield(m_lua, -1, "plugin");
+    if (!lua_istable(m_lua, -1)) {
+        lua_pop(m_lua, 2);
+        return std::unexpected("missing global table 'hl.plugin'");
+    }
+
+    const int pluginTableIdx = lua_gettop(m_lua);
+
+    lua_getfield(m_lua, pluginTableIdx, nameSpace.c_str());
+    if (lua_isnil(m_lua, -1)) {
+        lua_pop(m_lua, 1);
+        lua_newtable(m_lua);
+        lua_pushvalue(m_lua, -1);
+        lua_setfield(m_lua, pluginTableIdx, nameSpace.c_str());
+    } else if (!lua_istable(m_lua, -1)) {
+        lua_pop(m_lua, 3);
+        return std::unexpected(std::format("hl.plugin.{} already exists and is not a namespace table", nameSpace));
+    }
+
+    const int nameSpaceTableIdx = lua_gettop(m_lua);
+
+    lua_getfield(m_lua, nameSpaceTableIdx, name.c_str());
+    const bool exists = !lua_isnil(m_lua, -1);
+    lua_pop(m_lua, 1);
+
+    if (exists) {
+        lua_pop(m_lua, 3);
+        return std::unexpected(std::format("hl.plugin.{}.{} already exists", nameSpace, name));
+    }
+
+    lua_pushinteger(m_lua, sc<lua_Integer>(id));
+    lua_pushcclosure(m_lua, pluginLuaFunctionDispatcher, 1);
+    lua_setfield(m_lua, nameSpaceTableIdx, name.c_str());
+
+    lua_pop(m_lua, 3);
+    return {};
+}
+
+std::expected<void, std::string> CConfigManager::unregisterPluginLuaFunctionInState(const std::string& nameSpace, const std::string& name) {
+    if (!m_lua)
+        return std::unexpected("lua state not initialized");
+
+    lua_getglobal(m_lua, "hl");
+    if (!lua_istable(m_lua, -1)) {
+        lua_pop(m_lua, 1);
+        return {};
+    }
+
+    lua_getfield(m_lua, -1, "plugin");
+    if (!lua_istable(m_lua, -1)) {
+        lua_pop(m_lua, 2);
+        return {};
+    }
+
+    const int pluginTableIdx = lua_gettop(m_lua);
+
+    lua_getfield(m_lua, pluginTableIdx, nameSpace.c_str());
+    if (!lua_istable(m_lua, -1)) {
+        lua_pop(m_lua, 3);
+        return {};
+    }
+
+    const int nameSpaceTableIdx = lua_gettop(m_lua);
+
+    lua_pushnil(m_lua);
+    lua_setfield(m_lua, nameSpaceTableIdx, name.c_str());
+
+    bool isEmpty = true;
+    lua_pushnil(m_lua);
+    if (lua_next(m_lua, nameSpaceTableIdx) != 0) {
+        isEmpty = false;
+        lua_pop(m_lua, 2);
+    }
+
+    if (isEmpty) {
+        lua_pushnil(m_lua);
+        lua_setfield(m_lua, pluginTableIdx, nameSpace.c_str());
+    }
+
+    lua_pop(m_lua, 3);
+    return {};
+}
+
+void CConfigManager::erasePluginLuaFunction(uint64_t id) {
+    const auto REGIT = m_pluginLuaFunctionsByID.find(id);
+    if (REGIT == m_pluginLuaFunctionsByID.end())
+        return;
+
+    const auto& REG = REGIT->second;
+    const auto  KEY = REG.nameSpace + "." + REG.name;
+
+    auto        ownerIt = m_pluginLuaFunctionIDsByHandle.find(REG.handle);
+    if (ownerIt != m_pluginLuaFunctionIDsByHandle.end()) {
+        std::erase(ownerIt->second, id);
+        if (ownerIt->second.empty())
+            m_pluginLuaFunctionIDsByHandle.erase(ownerIt);
+    }
+
+    m_pluginLuaFunctionIDByPath.erase(KEY);
+    m_pluginLuaFunctionsByID.erase(REGIT);
+}
+
+int CConfigManager::invokePluginLuaFunctionByID(uint64_t id, lua_State* L) {
+    const auto REGIT = m_pluginLuaFunctionsByID.find(id);
+    if (REGIT == m_pluginLuaFunctionsByID.end())
+        return luaL_error(L, "hl.plugin: this function is no longer available (plugin unloaded)");
+
+    const auto FN = REGIT->second.fn;
+    if (!FN)
+        return luaL_error(L, "hl.plugin: this function is not callable");
+
+    return FN(L);
+}
+
+std::expected<void, std::string> CConfigManager::registerPluginLuaFunction(void* handle, const std::string& namespace_, const std::string& name, Config::PLUGIN_LUA_FN fn) {
+    if (!handle)
+        return std::unexpected("invalid handle");
+
+    if (!fn)
+        return std::unexpected("function pointer cannot be null");
+
+    if (!isValidLuaIdentifier(namespace_))
+        return std::unexpected("namespace must match [A-Za-z_][A-Za-z0-9_]*");
+
+    if (!isValidLuaIdentifier(name))
+        return std::unexpected("name must match [A-Za-z_][A-Za-z0-9_]*");
+
+    if (namespace_ == "load")
+        return std::unexpected("namespace 'load' is reserved");
+
+    const auto key = namespace_ + "." + name;
+    if (m_pluginLuaFunctionIDByPath.contains(key))
+        return std::unexpected("name collision: already registered");
+
+    const uint64_t id = m_nextPluginLuaFunctionID++;
+    if (const auto REGISTERED = registerPluginLuaFunctionInState(id, namespace_, name); !REGISTERED)
+        return REGISTERED;
+
+    m_pluginLuaFunctionsByID.emplace(id, SPluginLuaFunction{.id = id, .handle = handle, .nameSpace = namespace_, .name = name, .fn = fn});
+    m_pluginLuaFunctionIDByPath.emplace(key, id);
+    m_pluginLuaFunctionIDsByHandle[handle].emplace_back(id);
+
+    return {};
+}
+
+std::expected<void, std::string> CConfigManager::unregisterPluginLuaFunction(void* handle, const std::string& namespace_, const std::string& name) {
+    if (!handle)
+        return std::unexpected("invalid handle");
+
+    const auto key = namespace_ + "." + name;
+
+    const auto idIt = m_pluginLuaFunctionIDByPath.find(key);
+    if (idIt == m_pluginLuaFunctionIDByPath.end())
+        return std::unexpected("function not found");
+
+    const auto regIt = m_pluginLuaFunctionsByID.find(idIt->second);
+    if (regIt == m_pluginLuaFunctionsByID.end())
+        return std::unexpected("function registry mismatch");
+
+    if (regIt->second.handle != handle)
+        return std::unexpected("function belongs to a different plugin");
+
+    const auto removedFromState = unregisterPluginLuaFunctionInState(namespace_, name);
+    erasePluginLuaFunction(regIt->second.id);
+
+    if (!removedFromState)
+        return removedFromState;
+
+    return {};
+}
+
+void CConfigManager::onPluginUnload(void* handle) {
+    if (!handle)
+        return;
+
+    if (const auto it = m_pluginValues.find(handle); it != m_pluginValues.end()) {
+        for (const auto& name : it->second) {
+            m_configValues.erase(name);
+        }
+
+        m_pluginValues.erase(it);
+    }
+
+    if (const auto it = m_pluginLuaFunctionIDsByHandle.find(handle); it != m_pluginLuaFunctionIDsByHandle.end()) {
+        const auto ids = it->second;
+        for (const auto id : ids) {
+            const auto regIt = m_pluginLuaFunctionsByID.find(id);
+            if (regIt == m_pluginLuaFunctionsByID.end())
+                continue;
+
+            unregisterPluginLuaFunctionInState(regIt->second.nameSpace, regIt->second.name);
+            erasePluginLuaFunction(id);
+        }
+    }
 }

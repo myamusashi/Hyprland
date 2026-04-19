@@ -9,7 +9,13 @@
 
 #include "values/types/IValue.hpp"
 
+extern "C" {
+struct lua_State;
+}
+
 namespace Config {
+
+    using PLUGIN_LUA_FN = int (*)(lua_State*);
 
     struct SConfigOptionReply {
         // <type>* const*
@@ -59,6 +65,7 @@ namespace Config {
         virtual void                             handlePluginLoads() = 0;
 
         virtual std::expected<void, std::string> registerPluginValue(void* handle, SP<Config::Values::IValue> value) = 0;
+        virtual void                             onPluginUnload(void* handle)                                        = 0;
     };
 
     bool                initConfigManager();

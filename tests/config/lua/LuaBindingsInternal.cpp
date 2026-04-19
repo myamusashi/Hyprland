@@ -1,4 +1,7 @@
 #include <config/lua/bindings/LuaBindingsInternal.hpp>
+#include <config/lua/ConfigManager.hpp>
+
+#include <Compositor.hpp>
 
 #include <config/lua/types/LuaConfigInt.hpp>
 
@@ -11,6 +14,17 @@ extern "C" {
 
 using namespace Config::Lua;
 using namespace Config::Lua::Bindings;
+
+namespace Config::Lua {
+    class CConfigManagerPluginLuaTestAccessor {
+      public:
+        static void initializeLuaState(CConfigManager& mgr, lua_State* L) {
+            mgr.m_lua = L;
+            lua_pushlightuserdata(L, &mgr);
+            lua_setfield(L, LUA_REGISTRYINDEX, "hl_lua_manager");
+        }
+    };
+}
 
 namespace {
     class CLuaState {
@@ -31,6 +45,11 @@ namespace {
       private:
         lua_State* m_lua = nullptr;
     };
+
+    int testPluginFn(lua_State* L) {
+        lua_pushstring(L, "pong");
+        return 1;
+    }
 }
 
 TEST(ConfigLuaBindingsInternal, parseDirectionAliases) {
@@ -171,4 +190,67 @@ TEST(ConfigLuaBindingsInternal, parseTableFieldMissingFieldAndPrefixedErrors) {
     EXPECT_EQ(err.errorCode, PARSE_ERROR_BAD_TYPE);
     EXPECT_NE(err.message.find("field \"count\":"), std::string::npos);
     lua_pop(L, 1);
+}
+
+TEST(ConfigLuaBindingsInternal, pluginBindingIsTableWithLoadFunction) {
+    CLuaState  S;
+    const auto L = S.get();
+
+    lua_newtable(L);
+    Internal::registerConfigRuleBindings(L, nullptr);
+
+    lua_getfield(L, -1, "plugin");
+    ASSERT_TRUE(lua_istable(L, -1));
+
+    lua_getfield(L, -1, "load");
+    EXPECT_TRUE(lua_isfunction(L, -1));
+    lua_pop(L, 1);
+
+    lua_pop(L, 2);
+}
+
+TEST(ConfigLuaBindingsInternal, pluginLuaFnIsUnloadedWithoutDanglingCall) {
+    CLuaState  S;
+    const auto L = S.get();
+
+    auto       PREVCOMPOSITOR = std::move(g_pCompositor);
+    g_pCompositor             = makeUnique<CCompositor>(true);
+
+    CConfigManager mgr;
+    CConfigManagerPluginLuaTestAccessor::initializeLuaState(mgr, L);
+
+    lua_newtable(L);
+    Internal::registerConfigRuleBindings(L, &mgr);
+    lua_setglobal(L, "hl");
+
+    const auto HANDLE = reinterpret_cast<void*>(0x1BADB002);
+
+    const auto regResult = mgr.registerPluginLuaFunction(HANDLE, "demo", "ping", testPluginFn);
+    ASSERT_TRUE(regResult.has_value()) << regResult.error();
+
+    ASSERT_EQ(luaL_dostring(L, R"(
+        local f = hl.plugin.demo.ping
+        assert(type(f) == "function")
+        captured = f
+        local v = f()
+        assert(v == "pong")
+    )"),
+              LUA_OK);
+
+    mgr.onPluginUnload(HANDLE);
+
+    ASSERT_EQ(luaL_dostring(L, R"(
+        assert(hl.plugin.demo == nil)
+    )"),
+              LUA_OK);
+
+    ASSERT_EQ(luaL_dostring(L, R"(
+        local ok, err = pcall(captured)
+        assert(ok == false)
+        assert(type(err) == "string")
+        assert(string.find(err, "no longer available", 1, true) ~= nil)
+    )"),
+              LUA_OK);
+
+    g_pCompositor = std::move(PREVCOMPOSITOR);
 }

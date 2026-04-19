@@ -72,6 +72,9 @@ class IHyprLayout;
 class IHyprWindowDecoration;
 struct SConfigValue;
 class Hypr_dummyClass {};
+extern "C" {
+struct lua_State;
+}
 
 namespace Layout {
     class ITiledAlgorithm;
@@ -79,6 +82,7 @@ namespace Layout {
 };
 
 using HOOK_CALLBACK_FN = Hypr_dummyClass;
+using PLUGIN_LUA_FN    = int (*)(lua_State* L);
 
 /*
     These methods are for the plugin to implement
@@ -341,6 +345,22 @@ namespace HyprlandAPI {
         returns: true on success. False otherwise.
     */
     APICALL bool addConfigValueV2(HANDLE handle, SP<Config::Values::IValue> value);
+
+    /*
+        Register a plugin-owned Lua C callback under hl.plugin.<namespace>.<name>.
+
+        Callbacks are removed automatically on plugin unload.
+
+        returns: true on success. False otherwise.
+    */
+    APICALL bool addLuaFunction(HANDLE handle, const std::string& namespace_, const std::string& name, PLUGIN_LUA_FN fn);
+
+    /*
+        Unregister a plugin-owned Lua C callback from hl.plugin.<namespace>.<name>.
+
+        returns: true on success. False otherwise.
+    */
+    APICALL bool removeLuaFunction(HANDLE handle, const std::string& namespace_, const std::string& name);
 
 };
 
