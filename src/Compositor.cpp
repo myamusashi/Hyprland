@@ -2938,7 +2938,7 @@ void CCompositor::updateSuspendedStates() {
 }
 
 static void checkDefaultCursorWarp(PHLMONITOR monitor) {
-    static auto PCURSORMONITOR    = CConfigValue<std::string>("cursor:default_monitor");
+    static auto PCURSORMONITOR    = CConfigValue<Config::STRING>("cursor:default_monitor");
     static bool cursorDefaultDone = false;
     static bool firstLaunch       = true;
 

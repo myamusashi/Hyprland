@@ -1455,7 +1455,7 @@ void IHyprRenderer::initAssets() {
 }
 
 SP<ITexture> IHyprRenderer::renderText(const std::string& text, CHyprColor col, int pt, bool italic, const std::string& fontFamily, int maxWidth, int weight) {
-    static auto           FONT = CConfigValue<std::string>("misc:font_family");
+    static auto           FONT = CConfigValue<Config::STRING>("misc:font_family");
 
     const auto            FONTFAMILY = fontFamily.empty() ? *FONT : fontFamily;
     const auto            FONTSIZE   = pt;
@@ -3293,8 +3293,8 @@ bool IHyprRenderer::shouldBlur(WP<Desktop::View::CPopup> p) {
 SP<ITexture> IHyprRenderer::renderSplash(const std::function<SP<ITexture>(const int, const int, unsigned char* const)>& handleData, const int fontSize, const int maxWidth,
                                          const int maxHeight) {
     static auto PSPLASHCOLOR = CConfigValue<Config::INTEGER>("misc:col.splash");
-    static auto PSPLASHFONT  = CConfigValue<std::string>("misc:splash_font_family");
-    static auto FALLBACKFONT = CConfigValue<std::string>("misc:font_family");
+    static auto PSPLASHFONT  = CConfigValue<Config::STRING>("misc:splash_font_family");
+    static auto FALLBACKFONT = CConfigValue<Config::STRING>("misc:font_family");
 
     const auto  FONTFAMILY = *PSPLASHFONT != STRVAL_EMPTY ? *PSPLASHFONT : *FALLBACKFONT;
     const auto  COLOR      = CHyprColor(*PSPLASHCOLOR);

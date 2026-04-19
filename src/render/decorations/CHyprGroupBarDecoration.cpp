@@ -280,8 +280,8 @@ void CHyprGroupBarDecoration::invalidateTextures() {
 }
 
 CTitleTex::CTitleTex(PHLWINDOW pWindow, const Vector2D& bufferSize, const float monitorScale) : m_content(pWindow->m_title), m_windowOwner(pWindow) {
-    static auto      FALLBACKFONT             = CConfigValue<std::string>("misc:font_family");
-    static auto      PTITLEFONTFAMILY         = CConfigValue<std::string>("group:groupbar:font_family");
+    static auto      FALLBACKFONT             = CConfigValue<Config::STRING>("misc:font_family");
+    static auto      PTITLEFONTFAMILY         = CConfigValue<Config::STRING>("group:groupbar:font_family");
     static auto      PTITLEFONTSIZE           = CConfigValue<Config::INTEGER>("group:groupbar:font_size");
     static auto      PTEXTCOLORACTIVE         = CConfigValue<Config::INTEGER>("group:groupbar:text_color");
     static auto      PTEXTCOLORINACTIVE       = CConfigValue<Config::INTEGER>("group:groupbar:text_color_inactive");

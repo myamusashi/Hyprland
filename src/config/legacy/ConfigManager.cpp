@@ -958,7 +958,7 @@ void CConfigManager::postConfigReload(const Hyprlang::CParseResult& result) {
         w->uncacheWindowDecos();
     }
 
-    static auto PZOOMFACTOR = CConfigValue<Hyprlang::FLOAT>("cursor:zoom_factor");
+    static auto PZOOMFACTOR = CConfigValue<Config::FLOAT>("cursor:zoom_factor");
     for (auto const& m : g_pCompositor->m_monitors) {
         *(m->m_cursorZoom) = *PZOOMFACTOR;
         if (m->m_activeWorkspace)

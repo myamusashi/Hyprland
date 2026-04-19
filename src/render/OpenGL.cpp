@@ -751,7 +751,7 @@ void CHyprOpenGLImpl::begin(PHLMONITOR pMonitor, const CRegion& damage_, SP<IFra
 
     if (g_pHyprRenderer->m_reloadScreenShader) {
         g_pHyprRenderer->m_reloadScreenShader = false;
-        static auto PSHADER                   = CConfigValue<std::string>("decoration:screen_shader");
+        static auto PSHADER                   = CConfigValue<Config::STRING>("decoration:screen_shader");
         applyScreenShader(*PSHADER);
     }
 

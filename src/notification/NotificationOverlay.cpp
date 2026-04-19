@@ -127,7 +127,7 @@ CBox CNotificationOverlay::notificationDamageForMonitor(PHLMONITOR pMonitor) {
     float       offsetY  = NOTIF_OFFSET_Y;
     float       maxWidth = 0.F;
 
-    static auto fontFamily = CConfigValue<std::string>("misc:font_family");
+    static auto fontFamily = CConfigValue<Config::STRING>("misc:font_family");
 
     for (auto const& notif : m_notifications) {
         ensureNotificationCache(*notif, pMonitor, *fontFamily);
@@ -201,7 +201,7 @@ CBox CNotificationOverlay::drawNotifications(PHLMONITOR pMonitor) {
 
     const auto  MONSIZE = pMonitor->m_transformedSize;
 
-    static auto fontFamily = CConfigValue<std::string>("misc:font_family");
+    static auto fontFamily = CConfigValue<Config::STRING>("misc:font_family");
     const auto  PBEZIER    = g_pAnimationManager->getBezier("default");
 
     for (auto const& notif : m_notifications) {
