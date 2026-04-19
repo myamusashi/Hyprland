@@ -43,7 +43,7 @@ using namespace Hyprutils::OS;
 #include "../config/shared/animation/AnimationTree.hpp"
 #include "../config/values/ConfigValues.hpp"
 #include "../managers/CursorManager.hpp"
-#include "../hyprerror/HyprError.hpp"
+#include "../errorOverlay/Overlay.hpp"
 #include "../devices/IPointer.hpp"
 #include "../devices/IKeyboard.hpp"
 #include "../devices/ITouch.hpp"
@@ -1561,7 +1561,7 @@ static std::string dispatchSeterror(eHyprCtlOutputFormat format, std::string req
     std::string errorMessage = "";
 
     if (vars.size() < 3) {
-        g_pHyprError->destroy();
+        ErrorOverlay::overlay()->destroy();
 
         if (vars.size() == 2 && !vars[1].contains("dis"))
             return "var 1 not color or disable";
@@ -1575,10 +1575,10 @@ static std::string dispatchSeterror(eHyprCtlOutputFormat format, std::string req
         errorMessage += vars[i] + ' ';
 
     if (errorMessage.empty()) {
-        g_pHyprError->destroy();
+        ErrorOverlay::overlay()->destroy();
     } else {
         errorMessage.pop_back(); // pop last space
-        g_pHyprError->queueCreate(errorMessage, COLOR);
+        ErrorOverlay::overlay()->queueCreate(errorMessage, COLOR);
     }
 
     return "ok";
