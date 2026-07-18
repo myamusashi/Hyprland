@@ -97,8 +97,7 @@ void CFocusState::rawWindowFocus(PHLWINDOW pWindow, eFocusReason reason, SP<CWLS
     static auto PFOLLOWMOUSE        = CConfigValue<Config::INTEGER>("input:follow_mouse");
     static auto PSPECIALFALLTHROUGH = CConfigValue<Config::INTEGER>("input:special_fallthrough");
 
-    const auto PWINDOWSURFACE = surface ? surface : (pWindow ? pWindow->wlSurface()->resource() : nullptr);
-    if (pWindow == m_focusWindow && PWINDOWSURFACE == m_focusSurface && (surface || m_focusSurface.lock()))
+    if (pWindow == m_focusWindow && surface == m_focusSurface && m_focusSurface.lock())
         return;
 
     if (!pWindow || !pWindow->priorityFocus()) {
@@ -194,6 +193,7 @@ void CFocusState::rawWindowFocus(PHLWINDOW pWindow, eFocusReason reason, SP<CWLS
             g_pXWaylandManager->activateWindow(PLASTWINDOW, false);
     }
 
+    const auto PWINDOWSURFACE = surface ? surface : pWindow->wlSurface()->resource();
     rawSurfaceFocus(PWINDOWSURFACE, pWindow);
 
     g_pXWaylandManager->activateWindow(pWindow, true); // sets the m_pLastWindow
