@@ -11,17 +11,20 @@ class CWLSubsurfaceResource;
 
 namespace Desktop::View {
     class CPopup;
+    class CSessionLock;
     class CSubsurface : public virtual IView, public virtual IGeometric {
       public:
         // root dummy nodes
         static SP<CSubsurface> create(PHLWINDOW pOwner);
         static SP<CSubsurface> create(WP<Desktop::View::CPopup> pOwner);
         static SP<CSubsurface> create(PHLLS pOwner);
+        static SP<CSubsurface> create(SP<Desktop::View::CSessionLock> pOwner);
 
         // real nodes
         static SP<CSubsurface> create(SP<CWLSubsurfaceResource> pSubsurface, PHLWINDOW pOwner);
         static SP<CSubsurface> create(SP<CWLSubsurfaceResource> pSubsurface, WP<Desktop::View::CPopup> pOwner);
         static SP<CSubsurface> create(SP<CWLSubsurfaceResource> pSubsurface, PHLLS pOwner);
+        static SP<CSubsurface> create(SP<CWLSubsurfaceResource> pSubsurface, SP<Desktop::View::CSessionLock> pOwner);
 
         static SP<CSubsurface> fromView(SP<IView>);
 
@@ -41,6 +44,7 @@ namespace Desktop::View {
         Vector2D                       coordsRelativeToParent() const;
         Vector2D                       coordsGlobal() const;
         Vector2D                       renderScale() const;
+        SP<IView>                      ownerView() const;
         size_t                         allChildrenCount() const;
         size_t                         allMappedChildrenCount() const;
 
@@ -80,6 +84,7 @@ namespace Desktop::View {
         PHLWINDOWREF                                m_windowParent;
         WP<Desktop::View::CPopup>                   m_popupParent;
         PHLLSREF                                    m_layerSurfaceParent;
+        WP<Desktop::View::CSessionLock>             m_sessionLockParent;
 
         std::vector<SP<Desktop::View::CSubsurface>> m_children;
 

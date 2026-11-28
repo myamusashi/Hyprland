@@ -1,4 +1,5 @@
 #include "SessionLock.hpp"
+#include "Subsurface.hpp"
 
 #include "../../protocols/SessionLock.hpp"
 #include "../../protocols/core/Compositor.hpp"
@@ -23,11 +24,13 @@ View::CSessionLock::CSessionLock() : IView(CWLSurface::create()) {
 }
 
 View::CSessionLock::~CSessionLock() {
+    resetSubsurfaceHead();
     m_wlSurface->unassign();
 }
 
 void View::CSessionLock::init() {
     m_wlSurface->assign(m_surface->surface(), m_self.lock());
+    setSubsurfaceHead(CSubsurface::create(m_self.lock()));
 }
 
 SP<View::CSessionLock> View::CSessionLock::fromView(SP<IView> v) {

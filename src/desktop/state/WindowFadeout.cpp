@@ -41,6 +41,9 @@ static bool shouldBlurWindow(PHLWINDOW window) {
 }
 
 static void damageFadeoutMonitor(PHLMONITORREF monitor) {
+    if (g_pHyprRenderer->isWorkspaceHiddenBySessionLock())
+        return;
+
     if (const auto MONITOR = monitor.lock(); MONITOR)
         g_pHyprRenderer->damageMonitor(MONITOR);
 }

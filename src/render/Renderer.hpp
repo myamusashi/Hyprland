@@ -106,6 +106,9 @@ namespace Render {
         bool                            shouldRenderWindow(PHLWINDOW, PHLMONITOR);
         bool                            shouldRenderWindow(PHLWINDOW);
         bool                            shouldRenderMonitor(PHLMONITOR);
+        bool                            isWorkspaceHiddenBySessionLock() const;
+        bool                            isLayerHiddenBySessionLock(PHLLS) const;
+        bool                            isViewHiddenBySessionLock(SP<Desktop::View::IView>) const;
         void                            ensureCursorRenderingMode();
         bool                            shouldRenderCursor();
         void                            setCursorHidden(bool hide);

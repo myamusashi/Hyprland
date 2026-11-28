@@ -5,11 +5,12 @@
 #include "WLSurface.hpp"
 #include "View.hpp"
 #include "types/Geometric.hpp"
+#include "surfaceTree/SubsurfaceOwner.hpp"
 
 class CSessionLockSurface;
 
 namespace Desktop::View {
-    class CSessionLock : public virtual IView, public virtual IGeometric {
+    class CSessionLock : public virtual IView, public virtual IGeometric, public virtual CSubsurfaceOwner {
       public:
         static SP<CSessionLock> create(SP<CSessionLockSurface> resource);
 

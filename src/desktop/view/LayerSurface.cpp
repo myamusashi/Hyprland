@@ -71,7 +71,7 @@ PHLLS CLayerSurface::fromView(SP<IView> v) {
 
 void CLayerSurface::registerCallbacks() {
     m_alpha.get(LS_ALPHA_FADE)->setUpdateCallback([this](auto) {
-        if (m_ruleApplicator->dimAround().valueOrDefault() && m_monitor)
+        if (m_ruleApplicator->dimAround().valueOrDefault() && m_monitor && !g_pHyprRenderer->isLayerHiddenBySessionLock(m_self.lock()))
             g_pHyprRenderer->damageMonitor(m_monitor.lock());
     });
 }
@@ -155,8 +155,10 @@ void CLayerSurface::onDestroy() {
         PMONITOR->m_scheduledRecalc = true;
 
         // and damage
-        CBox geomFixed = {m_geometry.x + PMONITOR->m_position.x, m_geometry.y + PMONITOR->m_position.y, m_geometry.width, m_geometry.height};
-        g_pHyprRenderer->damageBox(geomFixed);
+        if (!g_pHyprRenderer->isLayerHiddenBySessionLock(SELF)) {
+            CBox geomFixed = {m_geometry.x + PMONITOR->m_position.x, m_geometry.y + PMONITOR->m_position.y, m_geometry.width, m_geometry.height};
+            g_pHyprRenderer->damageBox(geomFixed);
+        }
     }
 
     m_layerSurface.reset();
@@ -232,8 +234,10 @@ void CLayerSurface::onMap() {
 
     m_position = Vector2D(m_geometry.x, m_geometry.y);
 
-    CBox geomFixed = {m_geometry.x + PMONITOR->m_position.x, m_geometry.y + PMONITOR->m_position.y, m_geometry.width, m_geometry.height};
-    g_pHyprRenderer->damageBox(geomFixed);
+    if (!g_pHyprRenderer->isLayerHiddenBySessionLock(m_self.lock())) {
+        CBox geomFixed = {m_geometry.x + PMONITOR->m_position.x, m_geometry.y + PMONITOR->m_position.y, m_geometry.width, m_geometry.height};
+        g_pHyprRenderer->damageBox(geomFixed);
+    }
 
     m_realPosition->setConfig(Config::animationTree()->getAnimationPropertyConfig("layersIn"));
     m_realSize->setConfig(Config::animationTree()->getAnimationPropertyConfig("layersIn"));
@@ -271,8 +275,10 @@ void CLayerSurface::onUnmap() {
     m_realPosition->warp();
     m_realSize->warp();
 
+    const bool HIDDEN_BY_LOCK = g_pHyprRenderer->isLayerHiddenBySessionLock(m_self.lock());
+
     // make a snapshot and start fade
-    const auto SNAPSHOT    = !m_ruleApplicator->noanim().valueOrDefault() ? g_pHyprRenderer->makeSnapshotFB(m_self.lock()) : nullptr;
+    const auto SNAPSHOT    = !HIDDEN_BY_LOCK && !m_ruleApplicator->noanim().valueOrDefault() ? g_pHyprRenderer->makeSnapshotFB(m_self.lock()) : nullptr;
     const auto SOURCEALPHA = m_alpha.getTotal();
 
     // FIXME: this shouldn't be needed but it is because style is decided by the fuckin anim from this
@@ -302,12 +308,14 @@ void CLayerSurface::onUnmap() {
     } else if (Desktop::focusState()->surface() && Desktop::focusState()->surface() != m_wlSurface->resource())
         g_pSeatManager->setKeyboardFocus(Desktop::focusState()->surface());
 
-    CBox geomFixed = {m_geometry.x + PMONITOR->m_position.x, m_geometry.y + PMONITOR->m_position.y, m_geometry.width, m_geometry.height};
-    g_pHyprRenderer->damageBox(geomFixed);
+    if (!HIDDEN_BY_LOCK) {
+        CBox geomFixed = {m_geometry.x + PMONITOR->m_position.x, m_geometry.y + PMONITOR->m_position.y, m_geometry.width, m_geometry.height};
+        g_pHyprRenderer->damageBox(geomFixed);
 
-    geomFixed = {m_geometry.x + sc<int>(PMONITOR->m_position.x), m_geometry.y + sc<int>(PMONITOR->m_position.y), sc<int>(m_layerSurface->m_surface->m_current.size.x),
-                 sc<int>(m_layerSurface->m_surface->m_current.size.y)};
-    g_pHyprRenderer->damageBox(geomFixed);
+        geomFixed = {m_geometry.x + sc<int>(PMONITOR->m_position.x), m_geometry.y + sc<int>(PMONITOR->m_position.y), sc<int>(m_layerSurface->m_surface->m_current.size.x),
+                     sc<int>(m_layerSurface->m_surface->m_current.size.y)};
+        g_pHyprRenderer->damageBox(geomFixed);
+    }
 
     g_pInputManager->simulateMouseMovement();
 
@@ -336,6 +344,7 @@ void CLayerSurface::onCommit() {
     if (m_layer == ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND || m_layer == ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM)
         PMONITOR->m_blurFBDirty = true;
 
+    const bool     HIDDEN_BY_LOCK  = g_pHyprRenderer->isLayerHiddenBySessionLock(m_self.lock());
     CBox           geomFixed       = {m_geometry.x, m_geometry.y, m_geometry.width, m_geometry.height};
     const uint32_t layoutCommitted = m_layerSurface->m_current.committed & ~CLayerShellResource::eCommittedState::STATE_KEYBOARD_INTERACTIVITY;
     if (layoutCommitted != 0) {
@@ -353,10 +362,12 @@ void CLayerSurface::onCommit() {
 
             m_layer = NEW_LAYER;
 
-            if (m_ruleApplicator->dimAround().valueOrDefault())
-                g_pHyprRenderer->damageMonitor(PMONITOR);
-            else
-                g_pHyprRenderer->damageBox(geomFixed);
+            if (!HIDDEN_BY_LOCK) {
+                if (m_ruleApplicator->dimAround().valueOrDefault())
+                    g_pHyprRenderer->damageMonitor(PMONITOR);
+                else
+                    g_pHyprRenderer->damageBox(geomFixed);
+            }
 
             static auto PALLOWNEWTOPOVERFULLSCREEN = CConfigValue<Config::BOOL>("layers:allow_new_top_layers_over_existing_fullscreen");
 
@@ -390,7 +401,7 @@ void CLayerSurface::onCommit() {
             m_geometry = {m_geometry.pos(), m_layerSurface->m_surface->m_current.size};
         }
 
-        if (m_geometry != geomFixed) {
+        if (m_geometry != geomFixed && !HIDDEN_BY_LOCK) {
             g_pHyprRenderer->damageBox(geomFixed);
             g_pHyprRenderer->damageBox(m_geometry);
         }

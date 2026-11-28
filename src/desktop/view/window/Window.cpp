@@ -1821,6 +1821,12 @@ void CWindow::commitWindow(bool initialCommit) {
     if (!m_workspace->visible())
         return;
 
+    if (g_pHyprRenderer->isWorkspaceHiddenBySessionLock()) {
+        if (const auto SURF = wlSurface() ? wlSurface()->resource() : nullptr; SURF)
+            SURF->m_current.accumulateBufferDamage();
+        return;
+    }
+
     const auto PMONITOR = m_monitor.lock();
 
     // damageSurface consumes damage, so snapshot it for the tearing check below

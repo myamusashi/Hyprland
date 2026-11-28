@@ -24,7 +24,8 @@ struct SSessionLockSurface {
     SP<Desktop::View::CSessionLock> view;
     uint64_t                        iMonitorID = -1;
 
-    bool                            mapped = false;
+    bool                            mapped   = false;
+    Vector2D                        lastSize = {};
 
     struct {
         CHyprSignalListener map;

@@ -561,7 +561,8 @@ void CWLSurfaceResource::map() {
     frame(Time::steadyNow());
 
     m_current.bufferDamage = CBox{{}, m_current.bufferSize};
-    m_pending.bufferDamage = CBox{{}, m_pending.bufferSize};
+    if (m_pending.updated.bits.buffer)
+        m_pending.bufferDamage = CBox{{}, m_pending.bufferSize};
 }
 
 void CWLSurfaceResource::unmap() {

@@ -130,8 +130,8 @@ void CPopup::initAllSignals() {
 
     Animation::mgr()->createAnimation(0.f, m_alpha.get(POPUP_ALPHA_FADE), Config::animationTree()->getAnimationPropertyConfig("fadePopupsIn"), AVARDAMAGE_NONE);
     m_alpha.get(POPUP_ALPHA_FADE)->setUpdateCallback([this](auto) {
-        //
-        g_pHyprRenderer->damageBox(CBox{coordsGlobal(), size()});
+        if (!g_pHyprRenderer->isViewHiddenBySessionLock(m_self.lock()))
+            g_pHyprRenderer->damageBox(CBox{coordsGlobal(), size()});
     });
     m_alpha.get(POPUP_ALPHA_FADE)
         ->setCallbackOnEnd(
@@ -140,7 +140,8 @@ void CPopup::initAllSignals() {
                     g_pEventLoopManager->doLater([p = m_self] {
                         if (!p)
                             return;
-                        g_pHyprRenderer->damageBox(CBox{p->coordsGlobal(), p->size()});
+                        if (!g_pHyprRenderer->isViewHiddenBySessionLock(p.lock()))
+                            g_pHyprRenderer->damageBox(CBox{p->coordsGlobal(), p->size()});
                         p->fullyDestroy();
                     });
                 }
@@ -206,9 +207,11 @@ void CPopup::onMap() {
     const auto COORDS   = coordsGlobal();
     const auto PMONITOR = State::monitorState()->query().vec(COORDS).run();
 
-    CBox       box = m_wlSurface->resource()->extends();
-    box.translate(COORDS).expand(4);
-    g_pHyprRenderer->damageBox(box);
+    if (!g_pHyprRenderer->isViewHiddenBySessionLock(m_self.lock())) {
+        CBox box = m_wlSurface->resource()->extends();
+        box.translate(COORDS).expand(4);
+        g_pHyprRenderer->damageBox(box);
+    }
 
     m_lastPos = coordsRelativeToParent();
 
@@ -255,19 +258,22 @@ void CPopup::onUnmap() {
 
     invalidateTreeExtentsCache();
 
-    const auto COORDS = coordsGlobal();
+    const auto COORDS         = coordsGlobal();
+    const bool HIDDEN_BY_LOCK = g_pHyprRenderer->isViewHiddenBySessionLock(m_self.lock());
 
-    CBox       box = m_wlSurface->resource()->extends();
-    box.translate(COORDS).expand(4);
-    g_pHyprRenderer->damageBox(box);
+    if (!HIDDEN_BY_LOCK) {
+        CBox box = m_wlSurface->resource()->extends();
+        box.translate(COORDS).expand(4);
+        g_pHyprRenderer->damageBox(box);
 
-    // damage the last popup's explicit max size as well
-    box = CBox{COORDS, MAX_DAMAGE_SIZE}.expand(4);
-    g_pHyprRenderer->damageBox(box);
+        // damage the last popup's explicit max size as well
+        box = CBox{COORDS, MAX_DAMAGE_SIZE}.expand(4);
+        g_pHyprRenderer->damageBox(box);
+    }
 
     m_lastSize = MAX_DAMAGE_SIZE;
 
-    const auto SNAPSHOT           = g_pHyprRenderer->makeSnapshotFB(m_self);
+    const auto SNAPSHOT           = !HIDDEN_BY_LOCK ? g_pHyprRenderer->makeSnapshotFB(m_self) : nullptr;
     const auto WORKSPACE_SNAPSHOT = g_pHyprRenderer->makeSnapshotFB(m_self, Render::eSceneMode::WORKSPACE_WINDOWS);
     const auto SOURCEALPHA        = m_alpha.get(POPUP_ALPHA_FADE)->value();
 
@@ -287,15 +293,17 @@ void CPopup::onUnmap() {
     }
 
     // damage all children
-    breadthfirst(
-        [](WP<CPopup> p, void* data) {
-            if (!p->m_backend)
-                return;
+    if (!HIDDEN_BY_LOCK) {
+        breadthfirst(
+            [](WP<CPopup> p, void* data) {
+                if (!p->m_backend)
+                    return;
 
-            auto box = CBox{p->coordsGlobal(), p->size()};
-            g_pHyprRenderer->damageBox(box);
-        },
-        nullptr);
+                auto box = CBox{p->coordsGlobal(), p->size()};
+                g_pHyprRenderer->damageBox(box);
+            },
+            nullptr);
+    }
 
     if (g_pSeatManager->m_state.pointerFocus == m_wlSurface->resource())
         g_pInputManager->refocusPointer();
@@ -329,16 +337,21 @@ void CPopup::onCommit(bool ignoreSiblings) {
     if (!m_backend->mapped())
         return;
 
-    const auto COORDS      = coordsGlobal();
-    const auto COORDSLOCAL = coordsRelativeToParent();
+    const auto COORDS         = coordsGlobal();
+    const auto COORDSLOCAL    = coordsRelativeToParent();
+    const bool HIDDEN_BY_LOCK = g_pHyprRenderer->isViewHiddenBySessionLock(m_self.lock());
 
     if (m_lastSize != m_backend->surfaceSize() || m_requestedReposition || m_lastPos != COORDSLOCAL) {
-        CBox box = {localToGlobal(m_lastPos), m_lastSize};
-        box.expand(4);
-        g_pHyprRenderer->damageBox(box);
+        if (!HIDDEN_BY_LOCK) {
+            CBox box = {localToGlobal(m_lastPos), m_lastSize};
+            box.expand(4);
+            g_pHyprRenderer->damageBox(box);
+        }
         m_lastSize = m_backend->surfaceSize();
-        box        = {COORDS, m_lastSize};
-        g_pHyprRenderer->damageBox(box);
+        if (!HIDDEN_BY_LOCK) {
+            CBox box = {COORDS, m_lastSize};
+            g_pHyprRenderer->damageBox(box);
+        }
 
         m_lastPos = COORDSLOCAL;
 

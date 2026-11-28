@@ -6,23 +6,36 @@
 #include <config/shared/inotify/ConfigWatcher.hpp>
 #include <config/supplementary/jeremy/Jeremy.hpp>
 #include <desktop/state/LayerState.hpp>
+#include <desktop/state/WindowState.hpp>
 #include <desktop/view/LayerSurface.hpp>
+#include <desktop/view/Popup.hpp>
+#include <desktop/view/Subsurface.hpp>
 #include <desktop/view/WLSurface.hpp>
+#include <desktop/view/window/WaylandBackend.hpp>
+#include <desktop/view/window/Window.hpp>
+#include <desktop/view/window/WindowPresentation.hpp>
 #include <event/EventBus.hpp>
 #include <layout/LayoutManager.hpp>
 #include <managers/SeatManager.hpp>
+#include <managers/SessionLockManager.hpp>
 #include <managers/eventLoop/EventLoopManager.hpp>
 #include <output/Monitor.hpp>
 #include <protocols/FractionalScale.hpp>
 #include <protocols/LayerShell.hpp>
+#include <protocols/LockNotify.hpp>
 #include <protocols/PresentationTime.hpp>
+#include <protocols/SessionLock.hpp>
+#include <protocols/XDGShell.hpp>
 #include <protocols/core/Compositor.hpp>
+#include <protocols/core/Output.hpp>
 #include <protocols/core/Seat.hpp>
 #include <protocols/core/Subcompositor.hpp>
 #include <render/ElementRenderer.hpp>
 #include <render/Renderer.hpp>
 #include <render/SyncFDManager.hpp>
 #include <state/MonitorState.hpp>
+#include <state/WorkspaceState.hpp>
+#include <workspace/HLWorkspace.hpp>
 
 #include <array>
 #include <gtest/gtest.h>
@@ -58,6 +71,10 @@ class CLayerSurfaceTestOutput : public Aquamarine::IOutput {
 
 class CLayerSurfaceTestRenderer : public Render::IHyprRenderer {
   public:
+    CLayerSurfaceTestRenderer() {
+        m_cursorHidden = true;
+    }
+
     eType type() override {
         return RT_GL;
     }
@@ -206,6 +223,30 @@ struct SLayerSurfaceTestAccess {
 
 template struct SLayerSurfaceTestAccess<&Desktop::View::CLayerSurface::m_mapped>;
 
+static bool& windowTestMapped(PHLWINDOW window);
+static void  windowTestInitSurfaceTree(PHLWINDOW window);
+
+template <bool Desktop::View::CWindow::* Mapped, void (Desktop::View::CSubsurfaceOwner::*SetSub)(SP<Desktop::View::CSubsurface>),
+          void (Desktop::View::CPopupOwner::*SetPopup)(SP<Desktop::View::CPopup>)>
+struct SWindowTestAccess {
+    friend bool& windowTestMapped(PHLWINDOW window) {
+        return window.get()->*Mapped;
+    }
+    friend void windowTestInitSurfaceTree(PHLWINDOW window) {
+        (window.get()->*SetSub)(Desktop::View::CSubsurface::create(window));
+        (window.get()->*SetPopup)(Desktop::View::CPopup::create(window));
+    }
+};
+
+template struct SWindowTestAccess<&Desktop::View::CWindow::m_isMapped, &Desktop::View::CSubsurfaceOwner::setSubsurfaceHead, &Desktop::View::CPopupOwner::setPopupHead>;
+
+class CLayerSurfaceTestWorkspace : public Workspace::CHLWorkspace {
+  public:
+    explicit CLayerSurfaceTestWorkspace(PHLMONITOR monitor) : CHLWorkspace(Workspace::SWorkspaceNumberedID{1}, monitor, "layer-test", "1", Workspace::eWorkspaceType::NORMAL) {
+        ;
+    }
+};
+
 class CLayerSurfacePartialDamageTest : public ::testing::Test {
   protected:
     void SetUp() override {
@@ -226,8 +267,11 @@ class CLayerSurfacePartialDamageTest : public ::testing::Test {
         m_previousEventLoop      = std::move(g_pEventLoopManager);
         m_previousRenderer       = std::move(g_pHyprRenderer);
         m_previousSeatManager    = std::move(g_pSeatManager);
+        m_previousSessionLockMgr = std::move(g_pSessionLockManager);
         m_previousLayoutManager  = std::move(g_layoutManager);
         m_previousMonitorState   = std::move(State::monitorState());
+        m_previousWorkspaceState = std::move(State::workspaceState());
+        m_previousWindowState    = std::move(Desktop::windowState());
         m_previousEventBus       = std::move(Event::bus());
         m_previousConfig         = std::move(Config::mgr());
         m_previousWatcher        = std::move(Config::watcher());
@@ -238,10 +282,15 @@ class CLayerSurfacePartialDamageTest : public ::testing::Test {
         m_previousSubcompositor  = std::move(PROTO::subcompositor);
         m_previousFractional     = std::move(PROTO::fractional);
         m_previousSeat           = std::move(PROTO::seat);
+        m_previousLockNotify     = std::move(PROTO::lockNotify);
+        m_previousSessionLock    = std::move(PROTO::sessionLock);
+        m_previousOutputs        = std::move(PROTO::outputs);
         m_installedGlobals       = true;
 
         Event::bus()                        = makeUnique<Event::CEventBus>();
         State::monitorState()               = makeUnique<State::CMonitorStateTracker>();
+        State::workspaceState()             = makeUnique<State::CWorkspaceStateTracker>();
+        Desktop::windowState()              = makeUnique<Desktop::CWindowState>();
         g_pCompositor                       = makeUnique<CCompositor>(true);
         g_pCompositor->m_wlDisplay          = m_display.get();
         g_pCompositor->m_wlEventLoop        = wl_display_get_event_loop(m_display.get());
@@ -262,16 +311,22 @@ class CLayerSurfacePartialDamageTest : public ::testing::Test {
         g_pHyprRenderer         = makeUnique<CLayerSurfaceTestRenderer>();
         wl_event_source_timer_update(g_pHyprRenderer->m_cursorTicker, 0);
 
-        PROTO::presentation  = makeUnique<CPresentationProtocol>(&wp_presentation_interface, 2, "layer-surface-test");
-        PROTO::compositor    = makeUnique<CWLCompositorProtocol>(&wl_compositor_interface, 6, "layer-surface-test-compositor");
-        PROTO::subcompositor = makeUnique<CWLSubcompositorProtocol>(&wl_subcompositor_interface, 1, "layer-surface-test-subcompositor");
-        PROTO::fractional    = makeUnique<CFractionalScaleProtocol>(&wp_fractional_scale_manager_v1_interface, 1, "layer-surface-test-fractional");
-        PROTO::seat          = makeUnique<CWLSeatProtocol>(&wl_seat_interface, 9, "layer-surface-test-seat");
-        g_pSeatManager       = makeUnique<CSeatManager>();
+        PROTO::presentation   = makeUnique<CPresentationProtocol>(&wp_presentation_interface, 2, "layer-surface-test");
+        PROTO::compositor     = makeUnique<CWLCompositorProtocol>(&wl_compositor_interface, 6, "layer-surface-test-compositor");
+        PROTO::subcompositor  = makeUnique<CWLSubcompositorProtocol>(&wl_subcompositor_interface, 1, "layer-surface-test-subcompositor");
+        PROTO::fractional     = makeUnique<CFractionalScaleProtocol>(&wp_fractional_scale_manager_v1_interface, 1, "layer-surface-test-fractional");
+        PROTO::seat           = makeUnique<CWLSeatProtocol>(&wl_seat_interface, 9, "layer-surface-test-seat");
+        PROTO::lockNotify     = makeUnique<CLockNotifyProtocol>(&hyprland_lock_notifier_v1_interface, 1, "layer-surface-test-lock-notify");
+        PROTO::sessionLock    = makeUnique<CSessionLockProtocol>(&ext_session_lock_manager_v1_interface, 1, "layer-surface-test-session-lock");
+        g_pSeatManager        = makeUnique<CSeatManager>();
+        g_pSessionLockManager = makeUnique<CSessionLockManager>();
 
         m_monitor                    = makeShared<Monitor::CMonitor>(makeShared<CLayerSurfaceTestOutput>());
         m_monitor->m_self            = m_monitor;
         m_monitor->m_id              = 1;
+        m_monitor->m_name            = "TEST-1";
+        m_monitor->m_enabled         = true;
+        m_monitor->m_dpmsStatus      = true;
         m_monitor->m_position        = {0, 0};
         m_monitor->m_size            = {1920, 1080};
         m_monitor->m_pixelSize       = {1920, 1080};
@@ -280,13 +335,21 @@ class CLayerSurfacePartialDamageTest : public ::testing::Test {
         m_monitor->m_damage.setSize(m_monitor->m_transformedSize);
         m_monitor->m_damage.rotate();
         Event::bus()->m_events.monitor.added.emit(m_monitor);
+        PROTO::outputs[m_monitor->m_name] = makeShared<CWLOutputProtocol>(&wl_output_interface, 4, "layer-surface-test-output", m_monitor);
 
-        m_compositorId = m_nextID++;
+        m_compositorId    = m_nextID++;
+        m_subcompositorId = m_nextID++;
+        m_sessionLockId   = m_nextID++;
+        m_outputId        = m_nextID++;
         PROTO::compositor->bindManager(m_client, nullptr, 6, m_compositorId);
+        PROTO::subcompositor->bindManager(m_client, nullptr, 1, m_subcompositorId);
+        PROTO::sessionLock->bindManager(m_client, nullptr, 1, m_sessionLockId);
+        PROTO::outputs[m_monitor->m_name]->bindManager(m_client, nullptr, 4, m_outputId);
     }
 
     void TearDown() override {
         if (m_monitor) {
+            m_monitor->m_activeWorkspace.reset();
             for (auto& la : m_monitor->m_layerSurfaceLayers)
                 la.clear();
         }
@@ -294,14 +357,24 @@ class CLayerSurfacePartialDamageTest : public ::testing::Test {
             layerSurfaceTestMapped(layer) = false;
             layer->m_monitor.reset();
         }
+        for (const auto& window : m_windows)
+            Desktop::windowState()->removeSafe(window);
+        m_windows.clear();
+        m_xdgToplevels.clear();
+        m_xdgSurfaces.clear();
+        m_workspace.reset();
         m_layers.clear();
         m_layerResources.clear();
-        m_monitor.reset();
         if (m_display)
             wl_display_destroy_clients(m_display.get());
+        m_monitor.reset();
         if (!m_installedGlobals)
             return;
 
+        PROTO::outputs          = std::move(m_previousOutputs);
+        g_pSessionLockManager   = std::move(m_previousSessionLockMgr);
+        PROTO::sessionLock      = std::move(m_previousSessionLock);
+        PROTO::lockNotify       = std::move(m_previousLockNotify);
         g_pSeatManager          = std::move(m_previousSeatManager);
         PROTO::seat             = std::move(m_previousSeat);
         PROTO::subcompositor    = std::move(m_previousSubcompositor);
@@ -317,9 +390,11 @@ class CLayerSurfacePartialDamageTest : public ::testing::Test {
         Config::watcher()       = std::move(m_previousWatcher);
         if (Config::mgr())
             CConfigValueBase::flushCaches();
-        g_pCompositor         = std::move(m_previousCompositor);
-        State::monitorState() = std::move(m_previousMonitorState);
-        Event::bus()          = std::move(m_previousEventBus);
+        g_pCompositor           = std::move(m_previousCompositor);
+        Desktop::windowState()  = std::move(m_previousWindowState);
+        State::workspaceState() = std::move(m_previousWorkspaceState);
+        State::monitorState()   = std::move(m_previousMonitorState);
+        Event::bus()           = std::move(m_previousEventBus);
         Config::Supplementary::Jeremy::flushCachedCfgPath();
     }
 
@@ -384,7 +459,6 @@ class CLayerSurfacePartialDamageTest : public ::testing::Test {
 
         m_layerResources.emplace_back(resource);
         m_layers.emplace_back(layer);
-        m_monitor->m_layerSurfaceLayers[ZWLR_LAYER_SHELL_V1_LAYER_TOP].emplace_back(layer);
 
         auto buffer = createBuffer(geom.size());
         request(surfId, 1, {wl_resource_get_id(buffer->m_resource->getResource()), 0, 0}); // wl_surface.attach
@@ -399,6 +473,96 @@ class CLayerSurfacePartialDamageTest : public ::testing::Test {
         };
     }
 
+    struct SCreatedLock {
+        uint32_t      lockId     = 0;
+        uint32_t      surfId     = 0;
+        uint32_t      lockSurfId = 0;
+        SP<IHLBuffer> buffer;
+    };
+
+    SCreatedLock createSessionLock() {
+        const uint32_t lockId     = m_nextID++;
+        const uint32_t surfId     = m_nextID++;
+        const uint32_t lockSurfId = m_nextID++;
+
+        request(m_sessionLockId, 1, {lockId});                                // ext_session_lock_manager_v1.lock
+        request(m_compositorId, 0, {surfId});                                 // wl_compositor.create_surface
+        request(lockId, 1, {lockSurfId, surfId, m_outputId});                 // ext_session_lock_v1.get_lock_surface
+        request(lockSurfId, 1, {1});                                          // ext_session_lock_surface_v1.ack_configure
+
+        auto buffer = createBuffer(m_monitor->m_size);
+        request(surfId, 1, {wl_resource_get_id(buffer->m_resource->getResource()), 0, 0}); // wl_surface.attach
+        commit(surfId);
+
+        return SCreatedLock{
+            .lockId     = lockId,
+            .surfId     = surfId,
+            .lockSurfId = lockSurfId,
+            .buffer     = buffer,
+        };
+    }
+
+    struct SCreatedWindow {
+        uint32_t      surfId = 0;
+        PHLWINDOW     window;
+        SP<IHLBuffer> buffer;
+    };
+
+    SCreatedWindow createWindow(const CBox& box) {
+        if (!m_workspace) {
+            m_workspace                  = makeShared<CLayerSurfaceTestWorkspace>(m_monitor);
+            m_workspace->m_self          = m_workspace;
+            m_workspace->setVisible(true);
+            m_monitor->m_activeWorkspace = m_workspace;
+            Animation::mgr()->createAnimation(Vector2D{}, m_workspace->m_renderOffset, Config::animationTree()->getAnimationPropertyConfig("workspacesIn"), m_workspace,
+                                              AVARDAMAGE_ENTIRE);
+            Animation::mgr()->createAnimation(1.F, m_workspace->m_alpha, Config::animationTree()->getAnimationPropertyConfig("workspacesIn"), m_workspace, AVARDAMAGE_ENTIRE);
+        }
+
+        const uint32_t         surfId = m_nextID++;
+        SP<CWLSurfaceResource> surf;
+        auto                   newSurfListener = PROTO::compositor->m_events.newSurface.listen([&](SP<CWLSurfaceResource> s) { surf = s; });
+        request(m_compositorId, 0, {surfId}); // wl_compositor.create_surface
+        EXPECT_TRUE(surf);
+
+        auto xdg                = makeShared<CXDGSurfaceResource>(makeShared<CXdgSurface>(m_client, 6, m_nextID++), nullptr, surf);
+        xdg->m_self             = xdg;
+        xdg->m_pending.geometry = {{}, box.size()};
+        xdg->m_current.geometry = {{}, box.size()};
+        xdg->m_mapped           = true;
+        xdg->m_initialCommit    = false;
+        auto toplevel           = makeShared<CXDGToplevelResource>(makeShared<CXdgToplevel>(m_client, 6, m_nextID++), xdg);
+        toplevel->m_self        = toplevel;
+        xdg->m_toplevel         = toplevel;
+        surf->m_role            = makeShared<CXDGSurfaceRole>(xdg);
+
+        auto window              = Desktop::View::CWindow::create(makeUnique<Desktop::View::CWaylandBackend>(xdg));
+        window->m_monitor        = m_monitor;
+        window->m_workspace      = m_workspace;
+        window->positionAnimation()->setValueAndWarp(box.pos());
+        window->sizeAnimation()->setValueAndWarp(box.size());
+        window->presentation().alpha(Desktop::View::WINDOW_ALPHA_FADE)->setValueAndWarp(1.F);
+        windowTestInitSurfaceTree(window);
+        windowTestMapped(window) = true;
+        surf->m_mapped           = true;
+
+        m_xdgSurfaces.emplace_back(xdg);
+        m_xdgToplevels.emplace_back(toplevel);
+        m_windows.emplace_back(window);
+
+        auto buffer = createBuffer(box.size());
+        request(surfId, 1, {wl_resource_get_id(buffer->m_resource->getResource()), 0, 0}); // wl_surface.attach
+        commit(surfId);
+        takeDamage();
+        m_monitor->m_output->needsFrame = false;
+
+        return SCreatedWindow{
+            .surfId = surfId,
+            .window = window,
+            .buffer = buffer,
+        };
+    }
+
     void commit(uint32_t surfId) {
         request(surfId, 6); // wl_surface.commit
     }
@@ -409,13 +573,29 @@ class CLayerSurfacePartialDamageTest : public ::testing::Test {
         return damage;
     }
 
-    wl_client*                           m_client       = nullptr;
-    uint32_t                             m_nextID       = 2;
-    uint32_t                             m_compositorId = 0;
-    PHLMONITOR                           m_monitor;
-    std::vector<SP<IHLBuffer>>           m_buffers;
-    std::vector<SP<CLayerShellResource>> m_layerResources;
-    std::vector<PHLLS>                   m_layers;
+    void expectDamage(CRegion expected) {
+        CRegion    actual = takeDamage();
+        const auto actExt = actual.getExtents();
+        const auto expExt = expected.getExtents();
+        EXPECT_TRUE(pixman_region32_equal(actual.pixman(), expected.pixman()))
+            << "actual=(" << actExt.x << "," << actExt.y << "," << actExt.w << "," << actExt.h << ") empty=" << actual.empty() << " expected=(" << expExt.x << "," << expExt.y
+            << "," << expExt.w << "," << expExt.h << ")";
+    }
+
+    wl_client*                                 m_client          = nullptr;
+    uint32_t                                   m_nextID          = 2;
+    uint32_t                                   m_compositorId    = 0;
+    uint32_t                                   m_subcompositorId = 0;
+    uint32_t                                   m_sessionLockId   = 0;
+    uint32_t                                   m_outputId        = 0;
+    PHLMONITOR                                 m_monitor;
+    PHLWORKSPACE                               m_workspace;
+    std::vector<SP<IHLBuffer>>                 m_buffers;
+    std::vector<SP<CLayerShellResource>>       m_layerResources;
+    std::vector<PHLLS>                         m_layers;
+    std::vector<SP<CXDGSurfaceResource>>       m_xdgSurfaces;
+    std::vector<SP<CXDGToplevelResource>>      m_xdgToplevels;
+    std::vector<PHLWINDOW>                     m_windows;
 
   private:
     std::unique_ptr<wl_display, decltype(&wl_display_destroy)> m_display{nullptr, wl_display_destroy};
@@ -425,8 +605,11 @@ class CLayerSurfacePartialDamageTest : public ::testing::Test {
     UP<CEventLoopManager>                                      m_previousEventLoop;
     UP<Render::IHyprRenderer>                                  m_previousRenderer;
     UP<CSeatManager>                                           m_previousSeatManager;
+    UP<CSessionLockManager>                                    m_previousSessionLockMgr;
     UP<Layout::CLayoutManager>                                 m_previousLayoutManager;
     UP<State::CMonitorStateTracker>                            m_previousMonitorState;
+    UP<State::CWorkspaceStateTracker>                          m_previousWorkspaceState;
+    UP<Desktop::CWindowState>                                  m_previousWindowState;
     UP<Event::CEventBus>                                       m_previousEventBus;
     UP<Config::IConfigManager>                                 m_previousConfig;
     UP<Config::CConfigWatcher>                                 m_previousWatcher;
@@ -437,6 +620,9 @@ class CLayerSurfacePartialDamageTest : public ::testing::Test {
     UP<CWLSubcompositorProtocol>                               m_previousSubcompositor;
     UP<CFractionalScaleProtocol>                               m_previousFractional;
     UP<CWLSeatProtocol>                                        m_previousSeat;
+    UP<CLockNotifyProtocol>                                    m_previousLockNotify;
+    UP<CSessionLockProtocol>                                   m_previousSessionLock;
+    std::unordered_map<std::string, SP<CWLOutputProtocol>>     m_previousOutputs;
 };
 
 TEST_F(CLayerSurfacePartialDamageTest, NonLayoutCommitPreservesPartialDamageAndShrinkDamagesOldGeometry) {
@@ -565,4 +751,133 @@ TEST_F(CLayerSurfacePartialDamageTest, ArrangeLayersDamagesMonitorWhenUsableArea
     created.resource->m_surface->m_pending.updated.bits.layershell = true;
     commit(created.surfId);
     EXPECT_TRUE(pixman_region32_equal(takeDamage().pixman(), CRegion{0, 0, 1920, 1080}.pixman()));
+}
+
+TEST_F(CLayerSurfacePartialDamageTest, SessionLockSurfacePreservesPartialDamageAndSubsurfaceDamage) {
+    *CConfigValue<Config::BOOL>("misc:session_lock_xray").ptr() = false;
+
+    auto lock = createSessionLock();
+    // Initial map damages the full monitor.
+    EXPECT_TRUE(pixman_region32_equal(takeDamage().pixman(), CRegion{0, 0, 1920, 1080}.pixman()));
+
+    g_pSessionLockManager->onLockscreenRenderedOnMonitor(m_monitor->m_id);
+    ASSERT_TRUE(g_pSessionLockManager->clientLocked());
+
+    // Subsequent commit on ext_session_lock_surface_v1 must preserve partial damage.
+    request(lock.surfId, 1, {wl_resource_get_id(lock.buffer->m_resource->getResource()), 0, 0}); // wl_surface.attach
+    request(lock.surfId, 2, {10, 20, 30, 15});                                                   // wl_surface.damage
+    commit(lock.surfId);
+    expectDamage(CRegion{10, 20, 30, 15});
+
+    // A subsurface attached to the lock surface must also produce partial damage at its position.
+    const uint32_t subSurfId = m_nextID++;
+    const uint32_t subRoleId = m_nextID++;
+    request(m_compositorId, 0, {subSurfId});                          // wl_compositor.create_surface
+    request(m_subcompositorId, 1, {subRoleId, subSurfId, lock.surfId}); // wl_subcompositor.get_subsurface
+    request(subRoleId, 1, {100, 120});                                // wl_subsurface.set_position
+    request(subRoleId, 5);                                            // wl_subsurface.set_desync
+    auto subBuf = createBuffer({80, 40});
+    request(subSurfId, 1, {wl_resource_get_id(subBuf->m_resource->getResource()), 0, 0});
+    commit(subSurfId);
+    takeDamage();
+
+    request(subSurfId, 1, {wl_resource_get_id(subBuf->m_resource->getResource()), 0, 0});
+    request(subSurfId, 2, {5, 6, 20, 10});
+    commit(subSurfId);
+    expectDamage(CRegion{105, 126, 20, 10});
+
+    // With session_lock_xray enabled, lock surface commits must still preserve partial damage.
+    *CConfigValue<Config::BOOL>("misc:session_lock_xray").ptr() = true;
+    request(lock.surfId, 1, {wl_resource_get_id(lock.buffer->m_resource->getResource()), 0, 0});
+    request(lock.surfId, 2, {12, 24, 36, 18});
+    commit(lock.surfId);
+    EXPECT_TRUE(pixman_region32_equal(takeDamage().pixman(), CRegion{12, 24, 36, 18}.pixman()));
+
+    // Unlocking must damage the full monitor.
+    request(lock.lockId, 2); // ext_session_lock_v1.unlock_and_destroy
+    EXPECT_TRUE(pixman_region32_equal(takeDamage().pixman(), CRegion{0, 0, 1920, 1080}.pixman()));
+}
+
+TEST_F(CLayerSurfacePartialDamageTest, SessionLockSuppressesDamageFromHiddenLayersAndWindowsBelow) {
+    *CConfigValue<Config::BOOL>("misc:session_lock_xray").ptr() = false;
+
+    auto belowLayer = createLayerSurface("layer-below-lock", {0, 0, 1920, 40},
+                                         ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP | ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT | ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT, {0, 40});
+    auto aboveLayer = createLayerSurface("layer-above-lock", {50, 100, 400, 300}, ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP | ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT);
+    aboveLayer.resource->m_pending.margin.left = 50;
+    aboveLayer.resource->m_pending.margin.top  = 100;
+    aboveLayer.resource->m_current.margin.left = 50;
+    aboveLayer.resource->m_current.margin.top  = 100;
+    aboveLayer.resource->m_pending.exclusive   = -1;
+    aboveLayer.resource->m_current.exclusive   = -1;
+    aboveLayer.layer->m_ruleApplicator->aboveLock().set(1, Desktop::Types::PRIORITY_SET_PROP);
+    auto window = createWindow({200, 200, 600, 400});
+
+    auto lock = createSessionLock();
+    takeDamage();
+    g_pSessionLockManager->onLockscreenRenderedOnMonitor(m_monitor->m_id);
+    ASSERT_TRUE(g_pSessionLockManager->clientLocked());
+    m_monitor->m_output->needsFrame = false;
+
+    // Regular layer below the lockscreen must not damage or schedule a frame on surface commit.
+    request(belowLayer.surfId, 1, {wl_resource_get_id(belowLayer.buffer->m_resource->getResource()), 0, 0});
+    request(belowLayer.surfId, 2, {10, 5, 40, 20});
+    request(belowLayer.surfId, 3, {m_nextID++}); // wl_surface.frame
+    commit(belowLayer.surfId);
+    EXPECT_TRUE(takeDamage().empty());
+    EXPECT_FALSE(m_monitor->m_output->needsFrame);
+
+    // Layout / exclusive zone / plane changes on hidden layers must not damage the monitor.
+    belowLayer.resource->m_pending.committed |= CLayerShellResource::eCommittedState::STATE_EXCLUSIVE | CLayerShellResource::eCommittedState::STATE_LAYER;
+    belowLayer.resource->m_pending.exclusive                          = 40;
+    belowLayer.resource->m_pending.layer                              = ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY;
+    belowLayer.resource->m_surface->m_pending.updated.bits.layershell = true;
+    commit(belowLayer.surfId);
+    EXPECT_TRUE(takeDamage().empty());
+    EXPECT_FALSE(m_monitor->m_output->needsFrame);
+
+    // An aboveLock layer must still emit partial damage.
+    request(aboveLayer.surfId, 1, {wl_resource_get_id(aboveLayer.buffer->m_resource->getResource()), 0, 0});
+    request(aboveLayer.surfId, 2, {15, 25, 40, 20});
+    commit(aboveLayer.surfId);
+    EXPECT_TRUE(pixman_region32_equal(takeDamage().pixman(), CRegion{65, 125, 40, 20}.pixman()));
+    m_monitor->m_output->needsFrame = false;
+
+    // Windows below the lockscreen must not be considered renderable or damage the monitor.
+    EXPECT_FALSE(g_pHyprRenderer->shouldRenderWindow(window.window, m_monitor));
+    EXPECT_FALSE(g_pHyprRenderer->shouldRenderWindow(window.window));
+    g_pHyprRenderer->damageWindow(window.window);
+    g_pHyprRenderer->damageWindow(window.window, true);
+    EXPECT_TRUE(takeDamage().empty());
+
+    request(window.surfId, 1, {wl_resource_get_id(window.buffer->m_resource->getResource()), 0, 0});
+    request(window.surfId, 2, {20, 30, 50, 25});
+    request(window.surfId, 3, {m_nextID++}); // wl_surface.frame
+    commit(window.surfId);
+    EXPECT_TRUE(takeDamage().empty());
+    EXPECT_FALSE(m_monitor->m_output->needsFrame);
+
+    // With session_lock_xray enabled, hidden windows and layers below the lockscreen are rendered and must damage again.
+    *CConfigValue<Config::BOOL>("misc:session_lock_xray").ptr() = true;
+    EXPECT_TRUE(g_pHyprRenderer->shouldRenderWindow(window.window, m_monitor));
+    request(window.surfId, 1, {wl_resource_get_id(window.buffer->m_resource->getResource()), 0, 0});
+    request(window.surfId, 2, {20, 30, 50, 25});
+    commit(window.surfId);
+    expectDamage(CRegion{220, 230, 50, 25});
+
+    request(belowLayer.surfId, 1, {wl_resource_get_id(belowLayer.buffer->m_resource->getResource()), 0, 0});
+    request(belowLayer.surfId, 2, {10, 5, 40, 20});
+    commit(belowLayer.surfId);
+    expectDamage(CRegion{10, 5, 40, 20});
+
+    // Unlocking restores normal damage even when session_lock_xray is false.
+    *CConfigValue<Config::BOOL>("misc:session_lock_xray").ptr() = false;
+    request(lock.lockId, 2); // ext_session_lock_v1.unlock_and_destroy
+    takeDamage();
+
+    EXPECT_TRUE(g_pHyprRenderer->shouldRenderWindow(window.window, m_monitor));
+    request(window.surfId, 1, {wl_resource_get_id(window.buffer->m_resource->getResource()), 0, 0});
+    request(window.surfId, 2, {5, 10, 30, 20});
+    commit(window.surfId);
+    expectDamage(CRegion{205, 210, 30, 20});
 }

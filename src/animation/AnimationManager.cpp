@@ -86,6 +86,9 @@ static SAnimationContext& getContext(Hyprutils::Animation::CBaseAnimatedVariable
 }
 
 static void damageWindowForPolicies(PHLWINDOW pWindow, bool entire, const std::vector<SP<IHyprWindowDecoration>>& decorations) {
+    if (g_pHyprRenderer->isWorkspaceHiddenBySessionLock())
+        return;
+
     if (entire)
         g_pHyprRenderer->damageWindow(pWindow); // damageWindow already damages all decorations
     else
@@ -94,6 +97,9 @@ static void damageWindowForPolicies(PHLWINDOW pWindow, bool entire, const std::v
 }
 
 static void preDamageWorkspace(PHLWORKSPACE pWorkspace, PHLMONITOR pMonitor) {
+    if (g_pHyprRenderer->isWorkspaceHiddenBySessionLock())
+        return;
+
     // don't damage the whole monitor on workspace change, unless it's a special workspace, because dim/blur etc
     if (pWorkspace->type() == Workspace::eWorkspaceType::SPECIAL)
         g_pHyprRenderer->damageMonitor(pMonitor);
@@ -267,9 +273,11 @@ void CHyprAnimationManager::tick() {
         else if (owner.workspace)
             preDamageWorkspace(owner.workspace, owner.monitor);
         else if (owner.layer) {
-            CBox expandBox = owner.layer->geometricBox(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
-            expandBox.expand(5);
-            g_pHyprRenderer->damageBox(expandBox);
+            if (!g_pHyprRenderer->isLayerHiddenBySessionLock(owner.layer)) {
+                CBox expandBox = owner.layer->geometricBox(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
+                expandBox.expand(5);
+                g_pHyprRenderer->damageBox(expandBox);
+            }
         }
     }
 
@@ -325,14 +333,17 @@ void CHyprAnimationManager::tick() {
                 if (owner.layer->m_layer <= 1)
                     owner.monitor->m_blurFBDirty = true;
 
-                CBox expandBox = owner.layer->geometricBox(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
-                expandBox.expand(5);
-                g_pHyprRenderer->damageBox(expandBox);
+                if (!g_pHyprRenderer->isLayerHiddenBySessionLock(owner.layer)) {
+                    CBox expandBox = owner.layer->geometricBox(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
+                    expandBox.expand(5);
+                    g_pHyprRenderer->damageBox(expandBox);
+                }
             }
         }
 
-        const auto WORKSPACE = owner.monitor->getCurrentWorkspace();
-        if (!Fullscreen::controller()->getPresentedFullscreenWindow(WORKSPACE, Fullscreen::FSMODE_FULLSCREEN))
+        const bool HIDDEN_BY_LOCK = owner.layer ? g_pHyprRenderer->isLayerHiddenBySessionLock(owner.layer) : g_pHyprRenderer->isWorkspaceHiddenBySessionLock();
+        const auto WORKSPACE      = owner.monitor->getCurrentWorkspace();
+        if (!HIDDEN_BY_LOCK && !Fullscreen::controller()->getPresentedFullscreenWindow(WORKSPACE, Fullscreen::FSMODE_FULLSCREEN))
             owner.monitor->scheduleFrame(Aquamarine::IOutput::AQ_SCHEDULE_ANIMATION);
     }
 

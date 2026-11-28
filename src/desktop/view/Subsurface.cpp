@@ -1,4 +1,5 @@
 #include "Subsurface.hpp"
+#include "SessionLock.hpp"
 #include "../../render/SurfaceGeometry.hpp"
 #include "../state/FocusState.hpp"
 #include "window/Window.hpp"
@@ -37,6 +38,16 @@ SP<CSubsurface> CSubsurface::create(PHLLS pOwner) {
     auto subsurface                  = SP<CSubsurface>(new CSubsurface());
     subsurface->m_layerSurfaceParent = pOwner;
     subsurface->m_self               = subsurface;
+    subsurface->initSignals();
+    subsurface->initExistingSubsurfaces(pOwner->wlSurface()->resource());
+    subsurface->initView(subsurface, VIEW_TYPE_SUBSURFACE);
+    return subsurface;
+}
+
+SP<CSubsurface> CSubsurface::create(SP<Desktop::View::CSessionLock> pOwner) {
+    auto subsurface                 = SP<CSubsurface>(new CSubsurface());
+    subsurface->m_sessionLockParent = pOwner;
+    subsurface->m_self              = subsurface;
     subsurface->initSignals();
     subsurface->initExistingSubsurfaces(pOwner->wlSurface()->resource());
     subsurface->initView(subsurface, VIEW_TYPE_SUBSURFACE);
@@ -85,6 +96,20 @@ SP<CSubsurface> CSubsurface::create(SP<CWLSubsurfaceResource> pSubsurface, PHLLS
     return subsurface;
 }
 
+SP<CSubsurface> CSubsurface::create(SP<CWLSubsurfaceResource> pSubsurface, SP<Desktop::View::CSessionLock> pOwner) {
+    auto subsurface                 = SP<CSubsurface>(new CSubsurface());
+    subsurface->m_sessionLockParent = pOwner;
+    subsurface->m_subsurface        = pSubsurface;
+    subsurface->m_self              = subsurface;
+    subsurface->wlSurface()         = CWLSurface::create();
+    subsurface->wlSurface()->assign(pSubsurface->m_surface.lock(), subsurface);
+    subsurface->initSignals();
+    subsurface->initExistingSubsurfaces(pSubsurface->m_surface.lock());
+    subsurface->initView(subsurface, VIEW_TYPE_SUBSURFACE);
+    subsurface->syncScaleTransform();
+    return subsurface;
+}
+
 SP<CSubsurface> CSubsurface::fromView(SP<IView> v) {
     if (!v || v->type() != VIEW_TYPE_SUBSURFACE)
         return nullptr;
@@ -112,6 +137,8 @@ bool CSubsurface::focusAvailable() const {
         return m_popupParent->mapped() && m_popupParent->acceptsInput();
     if (!m_layerSurfaceParent.expired())
         return m_layerSurfaceParent->focusAvailable();
+    if (!m_sessionLockParent.expired())
+        return m_sessionLockParent->focusAvailable();
     if (m_parent)
         return m_parent->mapped() && m_parent->acceptsInput();
 
@@ -162,6 +189,8 @@ void CSubsurface::initSignals() {
             m_listeners.newSubsurface = m_popupParent->wlSurface()->resource()->m_events.newSubsurface.listen([this](const auto& resource) { onNewSubsurface(resource); });
         else if (!m_layerSurfaceParent.expired())
             m_listeners.newSubsurface = m_layerSurfaceParent->wlSurface()->resource()->m_events.newSubsurface.listen([this](const auto& resource) { onNewSubsurface(resource); });
+        else if (!m_sessionLockParent.expired())
+            m_listeners.newSubsurface = m_sessionLockParent->wlSurface()->resource()->m_events.newSubsurface.listen([this](const auto& resource) { onNewSubsurface(resource); });
         else
             ASSERT(false);
     }
@@ -195,8 +224,10 @@ void CSubsurface::recheckDamageForSubsurfaces(int depth) {
             SIZE.x == n->m_lastRecheckGlobalSize.x && SIZE.y == n->m_lastRecheckGlobalSize.y;
 
         if (!GEOMETRYUNCHANGED) {
+            const bool HIDDEN_BY_LOCK = g_pHyprRenderer->isViewHiddenBySessionLock(n);
+
             // damage the old area to clear stale pixels
-            if (n->m_hasLastRecheckGeometry)
+            if (n->m_hasLastRecheckGeometry && !HIDDEN_BY_LOCK)
                 g_pHyprRenderer->damageBox(CBox{n->m_lastRecheckGlobalPos, n->m_lastRecheckGlobalSize}.expand(4));
 
             n->m_lastRecheckGlobalPos   = COORDS;
@@ -204,7 +235,8 @@ void CSubsurface::recheckDamageForSubsurfaces(int depth) {
             n->m_hasLastRecheckGeometry = true;
 
             // damage the new area
-            g_pHyprRenderer->damageBox(CBox{COORDS, SIZE}.expand(4));
+            if (!HIDDEN_BY_LOCK)
+                g_pHyprRenderer->damageBox(CBox{COORDS, SIZE}.expand(4));
         }
 
         // recurse into children to handle nested subsurface trees
@@ -220,6 +252,12 @@ void CSubsurface::onCommit() {
         static auto PLOGDAMAGE = CConfigValue<Config::BOOL>("debug:log_damage");
         if (*PLOGDAMAGE)
             LOG(Log::DEBUG, "Refusing to commit damage from a subsurface of {} because it's invisible.", m_windowParent.lock());
+        return;
+    }
+
+    if (g_pHyprRenderer->isViewHiddenBySessionLock(m_self.lock())) {
+        m_lastSize     = m_wlSurface->resource()->m_current.size;
+        m_lastPosition = m_subsurface->m_position;
         return;
     }
 
@@ -264,6 +302,8 @@ void CSubsurface::onNewSubsurface(SP<CWLSubsurfaceResource> pSubsurface) {
         PSUBSURFACE = m_children.emplace_back(CSubsurface::create(pSubsurface, m_popupParent));
     else if (!m_layerSurfaceParent.expired())
         PSUBSURFACE = m_children.emplace_back(CSubsurface::create(pSubsurface, m_layerSurfaceParent.lock()));
+    else if (!m_sessionLockParent.expired())
+        PSUBSURFACE = m_children.emplace_back(CSubsurface::create(pSubsurface, m_sessionLockParent.lock()));
 
     PSUBSURFACE->m_self = PSUBSURFACE;
 
@@ -273,23 +313,33 @@ void CSubsurface::onNewSubsurface(SP<CWLSubsurfaceResource> pSubsurface) {
 }
 
 void CSubsurface::onMap() {
-    m_lastSize               = m_wlSurface->resource()->m_current.size;
-    m_lastPosition           = m_subsurface->m_position;
-    m_hasLastRecheckGeometry = false;
+    m_lastSize     = m_wlSurface->resource()->m_current.size;
+    m_lastPosition = m_subsurface->m_position;
 
-    const auto COORDS = coordsGlobal();
-    CBox       box{COORDS, m_lastSize};
-    box.expand(4);
-    g_pHyprRenderer->damageBox(box);
+    const auto COORDS        = coordsGlobal();
+    m_lastRecheckGlobalPos   = COORDS;
+    m_lastRecheckGlobalSize  = m_lastSize;
+    m_hasLastRecheckGeometry = true;
+
+    m_wlSurface->resource()->m_current.accumulateBufferDamage();
+
+    if (!g_pHyprRenderer->isViewHiddenBySessionLock(m_self.lock())) {
+        CBox box{COORDS, m_lastSize};
+        box.expand(4);
+        g_pHyprRenderer->damageBox(box);
+    }
 
     if (!m_windowParent.expired())
         m_windowParent->updateSurfaceScaleTransformDetails();
     else if (!m_layerSurfaceParent.expired())
         m_layerSurfaceParent->updateSurfaceScaleTransformDetails();
+    else if (!m_sessionLockParent.expired())
+        syncScaleTransform();
 }
 
 void CSubsurface::onUnmap() {
-    damageLastArea();
+    if (!g_pHyprRenderer->isViewHiddenBySessionLock(m_self.lock()))
+        damageLastArea();
 
     m_hasLastRecheckGeometry = false;
 
@@ -331,12 +381,26 @@ Vector2D CSubsurface::coordsGlobal() const {
         coords += m_popupParent->coordsGlobal();
     else if (!m_layerSurfaceParent.expired())
         coords += m_layerSurfaceParent->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
+    else if (!m_sessionLockParent.expired())
+        coords += m_sessionLockParent->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
 
     return coords;
 }
 
 Vector2D CSubsurface::renderScale() const {
     return Render::windowSubsurfaceScale(m_windowParent.lock());
+}
+
+SP<IView> CSubsurface::ownerView() const {
+    if (const auto WINDOW = m_windowParent.lock(); WINDOW)
+        return WINDOW;
+    if (const auto POPUP = m_popupParent.lock(); POPUP)
+        return POPUP;
+    if (const auto LAYER = m_layerSurfaceParent.lock(); LAYER)
+        return LAYER;
+    if (const auto LOCK = m_sessionLockParent.lock(); LOCK)
+        return LOCK;
+    return nullptr;
 }
 
 void CSubsurface::initExistingSubsurfaces(SP<CWLSurfaceResource> pSurface) {
@@ -356,6 +420,8 @@ void CSubsurface::syncScaleTransform() const {
         pMonitor = m_popupParent->getMonitor();
     else if (!m_layerSurfaceParent.expired())
         pMonitor = m_layerSurfaceParent->m_monitor.lock();
+    else if (!m_sessionLockParent.expired())
+        pMonitor = m_sessionLockParent->monitor();
 
     if (!pMonitor)
         return;
@@ -406,6 +472,8 @@ bool CSubsurface::cantLockCursor() const {
         return m_popupParent->cantLockCursor();
     if (!m_layerSurfaceParent.expired())
         return m_layerSurfaceParent->cantLockCursor();
+    if (!m_sessionLockParent.expired())
+        return m_sessionLockParent->cantLockCursor();
     if (m_parent)
         return m_parent->cantLockCursor();
 

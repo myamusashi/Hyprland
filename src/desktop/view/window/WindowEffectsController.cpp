@@ -41,6 +41,9 @@ std::optional<MotionBlur::SState> CWindowEffectsController::motionBlurState(bool
 }
 
 void CWindowEffectsController::damageMotionBlur(bool allowStale) const {
+    if (g_pHyprRenderer->isWorkspaceHiddenBySessionLock())
+        return;
+
     const auto STATE = motionBlurState(allowStale);
     if (!STATE)
         return;

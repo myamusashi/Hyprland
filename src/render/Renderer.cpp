@@ -235,7 +235,60 @@ WP<Render::GL::CHyprOpenGLImpl> IHyprRenderer::glBackend() {
     return Render::GL::g_pHyprOpenGL;
 }
 
+bool IHyprRenderer::isWorkspaceHiddenBySessionLock() const {
+    static auto PSESSIONLOCKXRAY = CConfigValue<Config::BOOL>("misc:session_lock_xray");
+
+    if (!g_pSessionLockManager || !g_pSessionLockManager->isSessionLocked() || *PSESSIONLOCKXRAY)
+        return false;
+
+    return g_pSessionLockManager->shallConsiderLockMissing() || g_pSessionLockManager->clientLocked();
+}
+
+bool IHyprRenderer::isLayerHiddenBySessionLock(PHLLS pLayer) const {
+    if (!pLayer || !g_pSessionLockManager || !g_pSessionLockManager->isSessionLocked())
+        return false;
+
+    if (pLayer->m_ruleApplicator->aboveLock().valueOrDefault()) {
+        const auto PMONITOR = pLayer->m_monitor.lock();
+        return !PMONITOR || g_pSessionLockManager->getSessionLockSurfaceForMonitor(PMONITOR->m_id).expired();
+    }
+
+    return isWorkspaceHiddenBySessionLock();
+}
+
+bool IHyprRenderer::isViewHiddenBySessionLock(SP<Desktop::View::IView> view) const {
+    if (!view || !g_pSessionLockManager || !g_pSessionLockManager->isSessionLocked())
+        return false;
+
+    switch (view->type()) {
+        case VIEW_TYPE_WINDOW: return isWorkspaceHiddenBySessionLock();
+        case VIEW_TYPE_LAYER_SURFACE: return isLayerHiddenBySessionLock(CLayerSurface::fromView(view));
+        case VIEW_TYPE_POPUP: {
+            const auto POPUP = CPopup::fromView(view);
+            if (!POPUP)
+                return false;
+            if (POPUP->windowOwner())
+                return isWorkspaceHiddenBySessionLock();
+            if (const auto LAYER = POPUP->layerOwner(); LAYER)
+                return isLayerHiddenBySessionLock(LAYER);
+            return false;
+        }
+        case VIEW_TYPE_SUBSURFACE: {
+            const auto SUBSURFACE = CSubsurface::fromView(view);
+            if (!SUBSURFACE)
+                return false;
+            return isViewHiddenBySessionLock(SUBSURFACE->ownerView());
+        }
+        case VIEW_TYPE_LOCK_SCREEN: return false;
+    }
+
+    return false;
+}
+
 bool IHyprRenderer::shouldRenderWindow(PHLWINDOW pWindow, PHLMONITOR pMonitor) {
+    if (isWorkspaceHiddenBySessionLock())
+        return false;
+
     if (!pWindow->presentation().visibleOnMonitor(pMonitor))
         return false;
 
@@ -301,6 +354,8 @@ bool IHyprRenderer::shouldRenderWindow(PHLWINDOW pWindow, PHLMONITOR pMonitor) {
 }
 
 bool IHyprRenderer::shouldRenderWindow(PHLWINDOW pWindow) {
+    if (isWorkspaceHiddenBySessionLock())
+        return false;
 
     if (!validMapped(pWindow))
         return false;
@@ -1223,8 +1278,7 @@ void IHyprRenderer::renderAllClientsForWorkspace(CRenderContext& ctx, PHLMONITOR
 
 void IHyprRenderer::renderAllClientsForWorkspace(CRenderContext& ctx, PHLMONITOR pMonitor, PHLWORKSPACE pWorkspace, const Time::steady_tp& time, eSceneMode mode,
                                                  const Vector2D& translate, const float& scale) {
-    static auto PXPMODE          = CConfigValue<Config::BOOL>("render:xp_mode");
-    static auto PSESSIONLOCKXRAY = CConfigValue<Config::BOOL>("misc:session_lock_xray");
+    static auto PXPMODE = CConfigValue<Config::BOOL>("render:xp_mode");
 
     if UNLIKELY (!pMonitor)
         return;
@@ -1232,12 +1286,10 @@ void IHyprRenderer::renderAllClientsForWorkspace(CRenderContext& ctx, PHLMONITOR
     if (mode != eSceneMode::MONITOR && !pWorkspace)
         return;
 
-    if UNLIKELY (g_pSessionLockManager->isSessionLocked() && !*PSESSIONLOCKXRAY) {
-        // We stop to render workspaces as soon as the lockscreen was sent the "locked" event.
-        // In addition we make sure to stop rendering workspaces after misc:lockdead_screen_delay has passed.
-        if (g_pSessionLockManager->shallConsiderLockMissing() || g_pSessionLockManager->clientLocked())
-            return;
-    }
+    // We stop to render workspaces as soon as the lockscreen was sent the "locked" event.
+    // In addition we make sure to stop rendering workspaces after misc:lockdead_screen_delay has passed.
+    if UNLIKELY (isWorkspaceHiddenBySessionLock())
+        return;
 
     SRenderModifData RENDERMODIFDATA;
     if (translate != Vector2D{0, 0})
@@ -2857,6 +2909,9 @@ void IHyprRenderer::sendFrameEventsToWorkspace(PHLMONITOR pMonitor, PHLWORKSPACE
         if (!view->mapped() || !view->acceptsInput() || !view->resource())
             continue;
 
+        if (isViewHiddenBySessionLock(view))
+            continue;
+
         const auto alphaModifier = dynamicPointerCast<Desktop::View::IAlphaModifiable>(view);
         if (alphaModifier && !alphaModifier->alphaNonZero())
             continue;
@@ -3009,7 +3064,7 @@ void IHyprRenderer::arrangeLayerArray(PHLMONITOR pMonitor, const std::vector<PHL
 
         ls->m_geometry = box;
 
-        if (ls->mapped() && ls->m_geometry != OLD_GEOM) {
+        if (ls->mapped() && ls->m_geometry != OLD_GEOM && !isLayerHiddenBySessionLock(ls.lock())) {
             if (!OLD_GEOM.empty())
                 damageBox(OLD_GEOM);
             damageBox(ls->m_geometry);
@@ -3048,7 +3103,7 @@ void IHyprRenderer::arrangeLayersForMonitor(const MONITORID& monitor) {
                 continue;
 
             const auto LS = la[i].lock();
-            if (!LS || !LS->mapped())
+            if (!LS || !LS->mapped() || isLayerHiddenBySessionLock(LS))
                 continue;
 
             if (LS->m_ruleApplicator->dimAround().valueOrDefault())
@@ -3067,7 +3122,7 @@ void IHyprRenderer::arrangeLayersForMonitor(const MONITORID& monitor) {
     PMONITOR->m_reservedArea.addType(Desktop::RESERVED_DYNAMIC_TYPE_LS, Desktop::CReservedArea{ORIGINAL_USABLE_AREA, usableArea});
 
     // Damage the monitor only if reserved area changed (affecting tiled windows).
-    if (usableArea != OLD_USABLE_AREA)
+    if (usableArea != OLD_USABLE_AREA && !isWorkspaceHiddenBySessionLock())
         damageMonitor(PMONITOR);
 
     g_layoutManager->invalidateMonitorGeometries(PMONITOR);
@@ -3080,6 +3135,11 @@ void IHyprRenderer::damageSurface(SP<CWLSurfaceResource> pSurface, double x, dou
     const auto WLSURF = Desktop::View::CWLSurface::fromResource(pSurface);
     if (!WLSURF) {
         LOG(Log::ERR, "BUG THIS: No CWLSurface for surface in damageSurface!!!");
+        return;
+    }
+
+    if (isViewHiddenBySessionLock(WLSURF->view())) {
+        pSurface->m_current.accumulateBufferDamage();
         return;
     }
 
@@ -3131,6 +3191,9 @@ void IHyprRenderer::damageSurface(SP<CWLSurfaceResource> pSurface, double x, dou
 }
 
 void IHyprRenderer::damageWindow(PHLWINDOW pWindow, bool forceFull) {
+    if (isWorkspaceHiddenBySessionLock())
+        return;
+
     CBox       windowBox        = pWindow->getFullWindowBoundingBox();
     const auto PWINDOWWORKSPACE = pWindow->presentation().workspace();
     if (PWINDOWWORKSPACE && PWINDOWWORKSPACE->m_renderOffset->isBeingAnimated() && !(pWindow->m_state & WINDOW_STATE_PINNED))

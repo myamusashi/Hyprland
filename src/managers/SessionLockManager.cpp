@@ -6,6 +6,7 @@
 #include "../render/Renderer.hpp"
 #include "../desktop/state/FocusState.hpp"
 #include "../desktop/view/SessionLock.hpp"
+#include "../desktop/view/Subsurface.hpp"
 #include "../managers/SeatManager.hpp"
 #include "../managers/input/InputManager.hpp"
 #include "../managers/eventLoop/EventLoopManager.hpp"
@@ -18,8 +19,13 @@ SSessionLockSurface::SSessionLockSurface(SP<CSessionLockSurface> surface_) : sur
 
     listeners.map = surface_->m_events.map.listen([this] {
         mapped = true;
+        if (const auto SURF = surface ? surface->surface() : nullptr; SURF) {
+            lastSize = SURF->m_current.size;
+            SURF->m_current.accumulateBufferDamage();
+        }
 
-        g_pInputManager->simulateMouseMovement();
+        if (g_pInputManager)
+            g_pInputManager->simulateMouseMovement();
 
         const auto PMONITOR = State::monitorState()->query().id(iMonitorID).run();
 
@@ -31,17 +37,36 @@ SSessionLockSurface::SSessionLockSurface(SP<CSessionLockSurface> surface_) : sur
         if (pWlrSurface == Desktop::focusState()->surface())
             Desktop::focusState()->surface().reset();
 
+        const auto PMONITOR = State::monitorState()->query().id(iMonitorID).run();
+
         g_pSessionLockManager->removeSessionLockSurface(this);
+
+        if (PMONITOR && g_pHyprRenderer)
+            g_pHyprRenderer->damageMonitor(PMONITOR);
     });
 
     listeners.commit = surface_->m_events.commit.listen([this] {
         const auto PMONITOR = State::monitorState()->query().id(iMonitorID).run();
 
-        if (mapped && !Desktop::focusState()->surface())
+        if (mapped && !Desktop::focusState()->surface() && g_pInputManager)
             g_pInputManager->simulateMouseMovement();
 
-        if (PMONITOR)
+        if (!PMONITOR || !surface)
+            return;
+
+        const auto SURF = surface->surface();
+        if (!SURF)
+            return;
+
+        if (lastSize != SURF->m_current.size || SURF->m_current.size != PMONITOR->m_size) {
+            lastSize = SURF->m_current.size;
+            SURF->m_current.accumulateBufferDamage();
             g_pHyprRenderer->damageMonitor(PMONITOR);
+        } else
+            g_pHyprRenderer->damageSurface(SURF, PMONITOR->m_position.x, PMONITOR->m_position.y);
+
+        if (view && view->subsurfaceHead())
+            view->subsurfaceHead()->recheckDamageForSubsurfaces();
     });
 }
 
@@ -89,7 +114,8 @@ void CSessionLockManager::onNewSessionLock(SP<CSessionLock> pLock) {
         m_events.unlock.emit();
 
         m_sessionLock.reset();
-        g_pInputManager->refocus();
+        if (g_pInputManager)
+            g_pInputManager->refocus();
 
         for (auto const& m : State::monitorState()->monitors())
             g_pHyprRenderer->damageMonitor(m);
@@ -149,7 +175,7 @@ void CSessionLockManager::removeSendLockedTimer() {
 }
 
 bool CSessionLockManager::isSessionLocked() {
-    return PROTO::sessionLock->isLocked();
+    return PROTO::sessionLock && PROTO::sessionLock->isLocked();
 }
 
 WP<SSessionLockSurface> CSessionLockManager::getSessionLockSurfaceForMonitor(uint64_t id) {
@@ -237,7 +263,8 @@ void CSessionLockManager::forceUnlock() {
     for (auto const& m : State::monitorState()->monitors())
         g_pHyprRenderer->damageMonitor(m);
 
-    g_pInputManager->refocus();
+    if (g_pInputManager)
+        g_pInputManager->refocus();
 }
 
 void CSessionLockManager::forceLock() {
